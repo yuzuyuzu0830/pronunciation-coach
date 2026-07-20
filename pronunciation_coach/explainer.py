@@ -14,13 +14,35 @@ from pronunciation_coach.types import DiagnosisReport, PhonemeError
 DEFAULT_MODEL = "llama3.2:3b"
 DEFAULT_BASE_URL = "http://localhost:11434"
 
-_ROLE_INSTRUCTION = """\
+_ROLE_INSTRUCTION_V1 = """\
 You are a pronunciation coach for English learners.
 A separate acoustic system has already detected the pronunciation errors \
 listed below. Your job is ONLY to explain them:
 - Do not re-judge, add, or remove errors.
 - Do not invent phoneme symbols; use only the symbols given below.
 - Explain in simple, plain English without specialised phonetic jargon."""
+
+# v2: hardened against three issues seen in practice (symbol invention,
+# structural collapse, and dubious L1 generalizations). v1 is kept for comparison.
+_ROLE_INSTRUCTION_V2 = """\
+You are a pronunciation coach for English learners.
+A separate acoustic system has already detected the pronunciation errors \
+listed below. Your job is ONLY to explain them:
+- Do not re-judge, add, or remove errors.
+- Do not write any new phonetic or IPA symbols: quote only the symbols that \
+appear in the error list below. Refer to a reading mistake using ordinary \
+word spelling only, never symbols.
+- Keep the exact order of the error list: one numbered item per error, and \
+start each item with the error's number from the list. Do not merge, split, \
+or repeat items.
+- Do not make generalised claims about the learner's L1 phonology (such as \
+"Japanese speakers tend to ...") unless you are certain they are true. Focus \
+on describing what happened and giving a practice method.
+- Explain in simple, plain English without specialised phonetic jargon."""
+
+_ROLE_INSTRUCTIONS = {"v1": _ROLE_INSTRUCTION_V1, "v2": _ROLE_INSTRUCTION_V2}
+PROMPT_VERSIONS = tuple(_ROLE_INSTRUCTIONS)
+DEFAULT_PROMPT_VERSION = "v1"
 
 
 def _format_error(index: int, error: PhonemeError) -> str:
@@ -40,8 +62,14 @@ def _format_misread_notice(word: str | None, read_as: str | None) -> str:
     return f'- The word "{word}" may have been read as "{read_as}".'
 
 
-def build_prompt(report: DiagnosisReport) -> str:
-    lines = [_ROLE_INSTRUCTION, ""]
+def build_prompt(
+    report: DiagnosisReport, version: str = DEFAULT_PROMPT_VERSION
+) -> str:
+    if version not in _ROLE_INSTRUCTIONS:
+        raise ValueError(
+            f"Unknown prompt version {version!r}; available: {PROMPT_VERSIONS}"
+        )
+    lines = [_ROLE_INSTRUCTIONS[version], ""]
     lines.append(f"Learner's first language (L1): {report.learner_l1}")
     if report.target_text is not None:
         lines.append(f'Target sentence: "{report.target_text}"')
@@ -100,13 +128,20 @@ class OllamaExplainer:
         model: str = DEFAULT_MODEL,
         base_url: str = DEFAULT_BASE_URL,
         timeout: float = 120.0,
+        prompt_version: str = DEFAULT_PROMPT_VERSION,
     ) -> None:
+        if prompt_version not in _ROLE_INSTRUCTIONS:
+            raise ValueError(
+                f"Unknown prompt version {prompt_version!r}; "
+                f"available: {PROMPT_VERSIONS}"
+            )
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        self._prompt_version = prompt_version
 
     def explain(self, report: DiagnosisReport) -> str:
-        prompt = build_prompt(report)
+        prompt = build_prompt(report, version=self._prompt_version)
         try:
             response = requests.post(
                 f"{self._base_url}/api/generate",

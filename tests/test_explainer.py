@@ -1,3 +1,5 @@
+import pytest
+
 from pronunciation_coach.explainer import build_prompt
 from pronunciation_coach.types import DiagnosisReport, PhonemeError
 
@@ -114,3 +116,44 @@ def test_prompt_instructs_word_level_guidance_for_misreads():
     prompt = build_prompt(make_report(MISREAD_ERRORS))
     assert "do not explain individual sounds" in prompt.lower()
     assert "read it again" in prompt
+
+
+# --- prompt v2: strengthened instructions, selectable per version ---
+
+
+def test_v1_is_the_default_version():
+    report = make_report(SAMPLE_ERRORS)
+    assert build_prompt(report) == build_prompt(report, version="v1")
+
+
+def test_unknown_prompt_version_raises_value_error():
+    with pytest.raises(ValueError, match="Unknown prompt version"):
+        build_prompt(make_report(SAMPLE_ERRORS), version="v99")
+
+
+def test_v2_forbids_writing_new_symbols():
+    prompt = build_prompt(make_report(SAMPLE_ERRORS), version="v2")
+    assert "Do not write any new phonetic or IPA symbols" in prompt
+    assert "quote only the symbols that appear in the error list" in prompt
+    assert "ordinary word spelling" in prompt
+
+
+def test_v2_forces_one_numbered_item_per_error():
+    prompt = build_prompt(make_report(SAMPLE_ERRORS), version="v2")
+    assert "one numbered item per error" in prompt
+    assert "start each item with the error's number" in prompt
+    assert "Do not merge, split, or repeat items" in prompt
+
+
+def test_v2_restrains_l1_generalisations():
+    prompt = build_prompt(make_report(SAMPLE_ERRORS), version="v2")
+    assert "generalised claims" in prompt
+    assert "unless you are certain" in prompt
+
+
+def test_v2_keeps_error_list_and_coach_role():
+    prompt = build_prompt(make_report(SAMPLE_ERRORS), version="v2")
+    assert "pronunciation coach" in prompt
+    assert "/ð/" in prompt
+    assert '"this"' in prompt
+    assert "Do not re-judge, add, or remove errors" in prompt

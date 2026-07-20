@@ -1,0 +1,19 @@
+{
+  "_comment": "E2E real data (2026-07-20, data/samples/sample2.m4a, whisper base + wav2vec2-lv-60-espeak-cv-ft). Run where target 'feature' was read as 'future': 6 ordinary errors + 1 misread word (feature→future, 3 flagged)",
+  "transcript": "Hi, this is my future prototype.",
+  "target_text": "Hi, this is my feature prototype.",
+  "reference_phonemes": ["h", "aɪ", "ð", "ɪ", "s", "ɪ", "z", "m", "aɪ", "f", "iː", "tʃ", "ɚ", "p", "ɹ", "oʊ", "ɾ", "oʊ", "t", "aɪ", "p"],
+  "hypothesis_phonemes": ["h", "ɑː", "h", "aɪ", "d", "ɪ", "s", "ɪ", "z", "m", "aɪ", "f", "uː", "t", "ɑː", "p", "ɹ", "ʊ", "t", "t", "aɪ", "p"],
+  "errors": [
+    {"op": "insertion", "expected": null, "actual": "h", "position": 0, "word": "Hi", "possibly_misread": false, "misread_as": null},
+    {"op": "insertion", "expected": null, "actual": "ɑː", "position": 0, "word": "Hi", "possibly_misread": false, "misread_as": null},
+    {"op": "substitution", "expected": "ð", "actual": "d", "position": 2, "word": "this", "possibly_misread": false, "misread_as": null},
+    {"op": "substitution", "expected": "iː", "actual": "uː", "position": 10, "word": "feature", "possibly_misread": true, "misread_as": "future"},
+    {"op": "substitution", "expected": "tʃ", "actual": "t", "position": 11, "word": "feature", "possibly_misread": true, "misread_as": "future"},
+    {"op": "substitution", "expected": "ɚ", "actual": "ɑː", "position": 12, "word": "feature", "possibly_misread": true, "misread_as": "future"},
+    {"op": "deletion", "expected": "oʊ", "actual": null, "position": 15, "word": "prototype", "possibly_misread": false, "misread_as": null},
+    {"op": "substitution", "expected": "ɾ", "actual": "ʊ", "position": 16, "word": "prototype", "possibly_misread": false, "misread_as": null},
+    {"op": "substitution", "expected": "oʊ", "actual": "t", "position": 17, "word": "prototype", "possibly_misread": false, "misread_as": null}
+  ],
+  "learner_l1": "Japanese"
+}

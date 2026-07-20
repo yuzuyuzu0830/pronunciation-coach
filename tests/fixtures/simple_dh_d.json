@@ -1,0 +1,11 @@
+{
+  "_comment": "Simple case: one ð→d substitution only. Minimal hand-crafted example for easy factuality checks of explanations",
+  "transcript": "This is high.",
+  "target_text": "This is high.",
+  "reference_phonemes": ["ð", "ɪ", "s", "ɪ", "z", "h", "aɪ"],
+  "hypothesis_phonemes": ["d", "ɪ", "s", "ɪ", "z", "h", "aɪ"],
+  "errors": [
+    {"op": "substitution", "expected": "ð", "actual": "d", "position": 0, "word": "This", "possibly_misread": false, "misread_as": null}
+  ],
+  "learner_l1": "Japanese"
+}
