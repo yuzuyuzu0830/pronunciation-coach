@@ -32,9 +32,11 @@ listed below. Your job is ONLY to explain them:
 - Do not write any new phonetic or IPA symbols: quote only the symbols that \
 appear in the error list below. Refer to a reading mistake using ordinary \
 word spelling only, never symbols.
-- Keep the exact order of the error list: one numbered item per error, and \
-start each item with the error's number from the list. Do not merge, split, \
-or repeat items.
+- For the numbered error list only: keep its exact order, write one numbered \
+item per error, and start each item with the error's number from the list. \
+Do not merge, split, or repeat items.
+- If a "Possible reading mistakes" section is given, always address it in a \
+separate final section after the numbered items; never drop it.
 - Do not make generalised claims about the learner's L1 phonology (such as \
 "Japanese speakers tend to ...") unless you are certain they are true. Focus \
 on describing what happened and giving a practice method.

@@ -80,10 +80,17 @@ def main() -> None:
         default=DEFAULT_FIXTURES,
         help="fixture names under tests/fixtures/ (without .json)",
     )
+    parser.add_argument(
+        "--tag",
+        default=None,
+        help="suffix for the output filename, to avoid overwriting "
+        "an earlier run on the same day",
+    )
     args = parser.parse_args()
 
     today = datetime.date.today().isoformat()
-    out_path = OUTPUT_DIR / f"explanations_{today}.md"
+    suffix = f"_{args.tag}" if args.tag else ""
+    out_path = OUTPUT_DIR / f"explanations_{today}{suffix}.md"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     lines = [

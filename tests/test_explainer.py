@@ -151,6 +151,15 @@ def test_v2_restrains_l1_generalisations():
     assert "unless you are certain" in prompt
 
 
+def test_v2_structure_rule_is_scoped_to_the_numbered_list():
+    """The one-item-per-error rule must not suppress the misread section
+    (regression observed in the 2026-07-20 comparison run)."""
+    prompt = build_prompt(make_report(SAMPLE_ERRORS), version="v2")
+    assert "For the numbered error list only" in prompt
+    assert 'If a "Possible reading mistakes" section is given' in prompt
+    assert "separate final section" in prompt
+
+
 def test_v2_keeps_error_list_and_coach_role():
     prompt = build_prompt(make_report(SAMPLE_ERRORS), version="v2")
     assert "pronunciation coach" in prompt
