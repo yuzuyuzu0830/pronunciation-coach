@@ -54,3 +54,63 @@ def test_prompt_without_errors_asks_for_praise():
     assert "No pronunciation errors were detected" in prompt
     assert "substitution" not in prompt
     assert "Japanese" in prompt
+
+
+# --- possibly-misread errors: word-level notice instead of phoneme detail ---
+
+MISREAD_ERRORS = [
+    PhonemeError(
+        "substitution", "h", "b", 5, "high",
+        possibly_misread=True, misread_as="buy",
+    ),
+]
+
+
+def test_prompt_turns_flagged_errors_into_word_level_notice():
+    prompt = build_prompt(make_report(MISREAD_ERRORS))
+    assert '"high"' in prompt
+    assert '"buy"' in prompt
+    assert "read as" in prompt
+    # No phoneme-level detail for reading mistakes:
+    assert "/h/" not in prompt
+    assert "/b/" not in prompt
+
+
+def test_prompt_flagged_omitted_word_reports_skip():
+    errors = [
+        PhonemeError("deletion", "h", None, 5, "high", possibly_misread=True)
+    ]
+    prompt = build_prompt(make_report(errors))
+    assert '"high"' in prompt
+    assert "skipped" in prompt
+    assert "/h/" not in prompt
+
+
+def test_prompt_mixed_errors_keeps_phoneme_detail_for_unflagged():
+    errors = [PhonemeError("substitution", "ð", "d", 0, "this")] + MISREAD_ERRORS
+    prompt = build_prompt(make_report(errors))
+    assert "/ð/" in prompt
+    assert "/d/" in prompt
+    assert '"buy"' in prompt
+    assert "/b/" not in prompt
+
+
+def test_prompt_dedupes_flagged_errors_of_the_same_word():
+    errors = [
+        PhonemeError(
+            "substitution", "h", "b", 5, "high",
+            possibly_misread=True, misread_as="buy",
+        ),
+        PhonemeError(
+            "substitution", "aɪ", "i", 6, "high",
+            possibly_misread=True, misread_as="buy",
+        ),
+    ]
+    prompt = build_prompt(make_report(errors))
+    assert prompt.count('"buy"') == 1
+
+
+def test_prompt_instructs_word_level_guidance_for_misreads():
+    prompt = build_prompt(make_report(MISREAD_ERRORS))
+    assert "do not explain individual sounds" in prompt.lower()
+    assert "read it again" in prompt

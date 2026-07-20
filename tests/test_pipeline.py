@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pronunciation_coach.pipeline import Pipeline, extract_errors
+from pronunciation_coach.pipeline import Pipeline, extract_errors, flag_misread_errors
 from pronunciation_coach.types import (
     AlignmentOp,
     CoachingResult,
@@ -58,6 +58,35 @@ def test_extract_errors_insertion_at_start_belongs_to_first_word():
     assert extract_errors(ops, WORD_SPANS) == [
         PhonemeError("insertion", None, "ɯ", 0, "this"),
     ]
+
+
+# --- flag_misread_errors (pure) ---
+
+
+def test_flag_misread_errors_flags_only_mismatched_words():
+    errors = [
+        PhonemeError("substitution", "ð", "d", 0, "this"),
+        PhonemeError("substitution", "aɪ", "uː", 4, "high"),
+    ]
+    assert flag_misread_errors(errors, {"high": "buy"}) == [
+        PhonemeError("substitution", "ð", "d", 0, "this"),
+        PhonemeError(
+            "substitution", "aɪ", "uː", 4, "high",
+            possibly_misread=True, misread_as="buy",
+        ),
+    ]
+
+
+def test_flag_misread_errors_marks_omitted_word_without_read_as():
+    errors = [PhonemeError("deletion", "h", None, 3, "high")]
+    flagged = flag_misread_errors(errors, {"high": None})
+    assert flagged[0].possibly_misread
+    assert flagged[0].misread_as is None
+
+
+def test_flag_misread_errors_without_mismatches_is_identity():
+    errors = [PhonemeError("substitution", "ð", "d", 0, "this")]
+    assert flag_misread_errors(errors, {}) == errors
 
 
 # --- Pipeline integration with fakes ---
@@ -145,6 +174,31 @@ def test_pipeline_with_perfect_pronunciation_reports_no_errors():
     assert isinstance(result, CoachingResult)
     assert result.report.errors == []
     assert result.explanation == "FAKE EXPLANATION"
+
+
+def test_pipeline_flags_errors_in_misread_words():
+    """Learner reads "buy" instead of "high": Whisper hears the other word,
+    so the h→b substitution is a reading mistake, not a pronunciation habit.
+    The ð→d error in the correctly-read "this" must stay unflagged."""
+    explainer = FakeExplainer()
+    pipeline = make_pipeline(
+        FakeTranscriber("this is buy"),
+        FakeRecognizer(["d", "ɪ", "s", "ɪ", "z", "b", "aɪ"]),
+        explainer,
+    )
+    result = pipeline.run(AUDIO, target_text="this is high")
+
+    assert isinstance(result, CoachingResult)
+    assert result.validation is not None
+    assert result.validation.passed  # WER 1/3 stays under the gate
+    assert result.validation.word_mismatches == {"high": "buy"}
+    assert result.report.errors == [
+        PhonemeError("substitution", "ð", "d", 0, "this"),
+        PhonemeError(
+            "substitution", "h", "b", 5, "high",
+            possibly_misread=True, misread_as="buy",
+        ),
+    ]
 
 
 def test_pipeline_gate_failure_skips_phoneme_evaluation():

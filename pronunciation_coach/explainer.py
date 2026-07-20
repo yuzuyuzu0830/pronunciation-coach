@@ -34,6 +34,12 @@ def _format_error(index: int, error: PhonemeError) -> str:
     return f"{index}. {error.op} {location}: {detail}"
 
 
+def _format_misread_notice(word: str | None, read_as: str | None) -> str:
+    if read_as is None:
+        return f'- The word "{word}" seems to have been skipped.'
+    return f'- The word "{word}" may have been read as "{read_as}".'
+
+
 def build_prompt(report: DiagnosisReport) -> str:
     lines = [_ROLE_INSTRUCTION, ""]
     lines.append(f"Learner's first language (L1): {report.learner_l1}")
@@ -49,15 +55,40 @@ def build_prompt(report: DiagnosisReport) -> str:
         )
         return "\n".join(lines)
 
-    lines.append("Detected errors:")
-    lines.extend(
-        _format_error(i, error) for i, error in enumerate(report.errors, start=1)
+    pronunciation_errors = [e for e in report.errors if not e.possibly_misread]
+    # One notice per misread word, not per phoneme error inside it.
+    misread_notices = dict.fromkeys(
+        (e.word, e.misread_as) for e in report.errors if e.possibly_misread
     )
-    lines.append("")
-    lines.append(
-        "For each error, explain what happened and give one practical tip "
-        "to fix it, considering difficulties typical for the learner's L1."
-    )
+
+    if pronunciation_errors:
+        lines.append("Detected pronunciation errors:")
+        lines.extend(
+            _format_error(i, error)
+            for i, error in enumerate(pronunciation_errors, start=1)
+        )
+        lines.append("")
+    if misread_notices:
+        lines.append("Possible reading mistakes (a different word was read):")
+        lines.extend(
+            _format_misread_notice(word, read_as)
+            for word, read_as in misread_notices
+        )
+        lines.append("")
+
+    if pronunciation_errors:
+        lines.append(
+            "For each pronunciation error, explain what happened and give one "
+            "practical tip to fix it, considering difficulties typical for "
+            "the learner's L1."
+        )
+    if misread_notices:
+        lines.append(
+            "For each possible reading mistake, do not explain individual "
+            "sounds — these are not pronunciation habits. Instead, point out "
+            "which word was likely read (or that it was skipped), and ask the "
+            "learner to check the target word and read it again."
+        )
     return "\n".join(lines)
 
 

@@ -50,7 +50,11 @@ def main() -> None:
         print(f"detected errors ({len(report.errors)}):")
         for e in report.errors:
             word = f'"{e.word}"' if e.word else f"position {e.position}"
-            print(f"  - {e.op} in {word}: expected /{e.expected}/, actual /{e.actual}/")
+            misread = ""
+            if e.possibly_misread:
+                read_as = f'read as "{e.misread_as}"' if e.misread_as else "word skipped"
+                misread = f"  [possible misread: {read_as}]"
+            print(f"  - {e.op} in {word}: expected /{e.expected}/, actual /{e.actual}/{misread}")
     else:
         print("detected errors: none")
     print()

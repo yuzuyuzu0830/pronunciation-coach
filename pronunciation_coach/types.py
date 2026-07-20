@@ -6,7 +6,7 @@ receives only these structured results and never performs detection.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 
@@ -24,6 +24,10 @@ class PhonemeError:
     actual: str | None  # None for deletion
     position: int  # index into the reference phonemes (insertion: preceding index)
     word: str | None  # word the error belongs to, when attributable
+    # Set when reading validation saw a different word here: the learner likely
+    # read another word, so phoneme-level coaching would mislead (design.md §6).
+    possibly_misread: bool = False
+    misread_as: str | None = None  # transcript word actually read (None: omitted)
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,10 @@ class ReadingValidation:
     wer: float
     threshold: float
     passed: bool
+    # Target words the transcript disagreed on, mapped to the word actually
+    # read (None: omitted). Keyed by word string, so a repeated target word is
+    # flagged at every occurrence — accepted while targets are single sentences.
+    word_mismatches: dict[str, str | None] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

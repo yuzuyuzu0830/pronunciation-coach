@@ -60,3 +60,31 @@ def test_threshold_is_adjustable():
 def test_result_records_default_threshold():
     result = validate_reading("this", "this")
     assert result.threshold == 0.5
+
+
+# --- word_mismatches: which target words disagreed with the transcript ---
+
+
+def test_word_mismatches_empty_on_exact_match():
+    result = validate_reading("this is high water", "this is high water")
+    assert result.word_mismatches == {}
+
+
+def test_word_mismatches_records_substituted_word_with_what_was_read():
+    """A misread word maps to the transcript word actually heard."""
+    result = validate_reading(
+        "please check the feature list", "please check the future list"
+    )
+    assert result.word_mismatches == {"feature": "future"}
+    assert result.passed  # under threshold: mismatch info must survive passing
+
+
+def test_word_mismatches_records_omitted_word_as_none():
+    result = validate_reading("the quick brown fox", "the quick fox")
+    assert result.word_mismatches == {"brown": None}
+
+
+def test_word_mismatches_ignores_extra_transcript_words():
+    """An inserted word has no target-side word to flag."""
+    result = validate_reading("this is high", "this is very high")
+    assert result.word_mismatches == {}

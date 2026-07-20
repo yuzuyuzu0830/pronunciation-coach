@@ -33,10 +33,19 @@ def validate_reading(
     edit_count = sum(1 for op in ops if op.op != "match")
     wer = edit_count / max(len(target_words), 1)
 
+    # Target words the transcript disagreed on (ref side of substitution or
+    # deletion). Inserted transcript words have no target word to flag.
+    word_mismatches: dict[str, str | None] = {
+        op.ref_phone: op.hyp_phone
+        for op in ops
+        if op.op != "match" and op.ref_phone is not None
+    }
+
     return ReadingValidation(
         target_words=target_words,
         transcript_words=transcript_words,
         wer=wer,
         threshold=threshold,
         passed=wer <= threshold,
+        word_mismatches=word_mismatches,
     )

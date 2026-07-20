@@ -6,6 +6,7 @@ comparison experiments (docs/design.md §2).
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Protocol
 
@@ -73,6 +74,22 @@ def extract_errors(
     return errors
 
 
+def flag_misread_errors(
+    errors: list[PhonemeError], word_mismatches: dict[str, str | None]
+) -> list[PhonemeError]:
+    """Mark errors in words that failed reading validation as possible misreads.
+
+    Such errors reflect a different word being read, not a pronunciation
+    habit, so the explainer must switch to word-level guidance for them.
+    """
+    return [
+        replace(error, possibly_misread=True, misread_as=word_mismatches[error.word])
+        if error.word in word_mismatches
+        else error
+        for error in errors
+    ]
+
+
 class Pipeline:
     def __init__(
         self,
@@ -113,6 +130,8 @@ class Pipeline:
 
         ops = align_phonemes(reference, hypothesis)
         errors = extract_errors(ops, word_spans)
+        if validation is not None and validation.word_mismatches:
+            errors = flag_misread_errors(errors, validation.word_mismatches)
 
         report = DiagnosisReport(
             transcript=transcript,
