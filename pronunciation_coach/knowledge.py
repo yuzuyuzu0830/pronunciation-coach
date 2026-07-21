@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
@@ -135,11 +136,15 @@ def _record_from_json(raw: dict, tier: Literal["l1_specific", "phoneme_fallback"
     )
 
 
+@lru_cache(maxsize=None)
 def load_l1_rules(l1: str) -> list[KnowledgeRecord]:
     """Load the L1 rule table for `l1`, in file order (= match priority).
 
     An L1 with no rule file returns an empty list, so match_knowledge falls
     through to the phoneme fallback layer naturally (docs/design_3c.md §1).
+    Cached: match_knowledge() calls this once per PhonemeError, and the JSON
+    files don't change during a process's lifetime, so re-parsing per error
+    is pure waste.
     """
     path = _L1_RULES_DIR / f"{l1.strip().lower()}.json"
     if not path.exists():
@@ -148,8 +153,13 @@ def load_l1_rules(l1: str) -> list[KnowledgeRecord]:
     return [_record_from_json(raw, "l1_specific", raw["cause"]) for raw in raw_records]
 
 
+@lru_cache(maxsize=None)
 def load_phoneme_fallback() -> dict[str, KnowledgeRecord]:
-    """Load the L1-independent fallback dictionary, keyed by target phoneme."""
+    """Load the L1-independent fallback dictionary, keyed by target phoneme.
+
+    Cached for the same reason as load_l1_rules: called once per unmatched
+    error, and the underlying file is static for the process's lifetime.
+    """
     raw_records = json.loads(_PHONEME_FALLBACK_PATH.read_text())
     return {
         raw["phoneme"]: _record_from_json(raw, "phoneme_fallback", cause=None)
