@@ -1,6 +1,6 @@
 import pytest
 
-from pronunciation_coach.explainer import build_prompt
+from pronunciation_coach.explainer import build_prompt, rank_errors_by_tier
 from pronunciation_coach.types import DiagnosisReport, PhonemeError
 
 
@@ -166,3 +166,150 @@ def test_v2_keeps_error_list_and_coach_role():
     assert "/ð/" in prompt
     assert '"this"' in prompt
     assert "Do not re-judge, add, or remove errors" in prompt
+
+
+# --- rank_errors_by_tier: tier priority sort + top-N selection (design_3c.md §4) ---
+
+
+def test_rank_errors_by_tier_orders_l1_then_fallback_then_none():
+    l1_error = PhonemeError("substitution", "ð", "d", 0, "this")  # dh_stopping
+    fallback_error = PhonemeError("substitution", "v", "b", 1, "van")  # phoneme fallback only
+    none_error = PhonemeError("substitution", "x", "y", 2, "word")  # no match at all
+
+    ranked = rank_errors_by_tier(
+        [none_error, fallback_error, l1_error],
+        reference_phonemes=["ð", "v", "x"],
+        l1="Japanese",
+    )
+
+    assert [error for error, _ in ranked] == [l1_error, fallback_error, none_error]
+    assert ranked[0][1].tier == "l1_specific"
+    assert ranked[1][1].tier == "phoneme_fallback"
+    assert ranked[2][1] is None
+
+
+def test_rank_errors_by_tier_is_stable_within_the_same_tier():
+    first = PhonemeError("substitution", "v", "b", 0, "van")  # fallback tier
+    second = PhonemeError("substitution", "f", "b", 1, "fan")  # fallback tier
+
+    ranked = rank_errors_by_tier(
+        [first, second], reference_phonemes=["v", "f"], l1="Japanese"
+    )
+
+    assert [error for error, _ in ranked] == [first, second]
+
+
+def test_rank_errors_by_tier_top_n_slice_keeps_only_the_highest_tiers():
+    l1_error = PhonemeError("substitution", "ð", "d", 0, "this")
+    fallback_error = PhonemeError("substitution", "v", "b", 1, "van")
+    none_error = PhonemeError("substitution", "x", "y", 2, "word")
+
+    ranked = rank_errors_by_tier(
+        [none_error, l1_error, fallback_error],
+        reference_phonemes=["ð", "v", "x"],
+        l1="Japanese",
+    )
+    full_explanation, facts_only = ranked[:2], ranked[2:]
+
+    assert [error for error, _ in full_explanation] == [l1_error, fallback_error]
+    assert [error for error, _ in facts_only] == [none_error]
+
+
+# --- prompt v3: structured-knowledge injection (design_3c.md §5) ---
+
+
+def make_v3_report(errors: list[PhonemeError]) -> DiagnosisReport:
+    return DiagnosisReport(
+        transcript="dis is high",
+        target_text="this is high",
+        reference_phonemes=["x", "v", "ð", "ɪ", "s"],
+        hypothesis_phonemes=["y", "b", "d", "ɪ", "s"],
+        errors=errors,
+        learner_l1="Japanese",
+    )
+
+
+V3_ERRORS = [
+    PhonemeError("substitution", "x", "y", 0, "wordx"),  # no match at all
+    PhonemeError("substitution", "v", "b", 1, "van"),  # phoneme_fallback tier
+    PhonemeError("substitution", "ð", "d", 2, "this"),  # l1_specific tier (dh_stopping)
+]
+
+
+def test_v3_role_instruction_limits_llm_to_rephrasing():
+    prompt = build_prompt(make_v3_report(V3_ERRORS), version="v3")
+    assert "Your job is only to rephrase the given" in prompt
+    assert "do not speculate about why" in prompt
+
+
+def test_v3_header_reports_total_and_explained_counts():
+    prompt = build_prompt(
+        make_v3_report(V3_ERRORS), version="v3", full_explanation_limit=2
+    )
+    assert "Detected 3 errors, 2 explained in detail below." in prompt
+
+
+def test_v3_item_count_literal_matches_total_errors():
+    prompt = build_prompt(make_v3_report(V3_ERRORS), version="v3")
+    assert "There are exactly 3 numbered items below" in prompt
+    assert "Output exactly 3 numbered items" in prompt
+
+
+def test_v3_item_count_literal_handles_a_single_error_without_extra_items():
+    """Regression test for the 2026-07-20 comparison run's fabricated
+    'item 2: no errors' behavior when there is exactly one real error."""
+    single = [PhonemeError("substitution", "ð", "d", 0, "this")]
+    prompt = build_prompt(make_v3_report(single), version="v3")
+    assert "There are exactly 1 numbered items below" in prompt
+    assert "Output exactly 1 numbered items" in prompt
+
+
+def test_v3_orders_items_by_tier_not_by_detection_order():
+    prompt = build_prompt(make_v3_report(V3_ERRORS), version="v3")
+    assert prompt.index('"this"') < prompt.index('"van"') < prompt.index('"wordx"')
+
+
+def test_v3_embeds_knowledge_only_for_items_within_the_limit():
+    prompt = build_prompt(
+        make_v3_report(V3_ERRORS), version="v3", full_explanation_limit=1
+    )
+    # Tier-sorted rank 1 is "this" (l1_specific); "van" (fallback, rank 2)
+    # must not get a knowledge block when the limit is 1.
+    assert "Known phenomenon: dh_stopping" in prompt
+    assert "Known phenomenon: fallback_v" not in prompt
+
+
+def test_v3_unmatched_item_never_gets_a_knowledge_block():
+    prompt = build_prompt(
+        make_v3_report(V3_ERRORS), version="v3", full_explanation_limit=3
+    )
+    lines = prompt.splitlines()
+    wordx_index = next(i for i, line in enumerate(lines) if '"wordx"' in line)
+    trailing = lines[wordx_index + 1 :]
+    assert not any(line.strip().startswith("Known phenomenon") for line in trailing)
+
+
+def test_v3_fallback_tier_item_has_tip_but_no_cause_line():
+    prompt = build_prompt(
+        make_v3_report(V3_ERRORS), version="v3", full_explanation_limit=3
+    )
+    lines = prompt.splitlines()
+    van_index = next(i for i, line in enumerate(lines) if '"van"' in line)
+    block = []
+    for line in lines[van_index + 1 :]:
+        stripped = line.strip()
+        if stripped == "" or stripped[:1].isdigit():
+            break
+        block.append(stripped)
+    assert any(line.startswith("Known phenomenon: fallback_v") for line in block)
+    assert any(line.startswith("Tip:") for line in block)
+    assert not any(line.startswith("Cause:") for line in block)
+
+
+def test_v3_misread_section_keeps_v2_word_level_notice_format():
+    errors = [PhonemeError("substitution", "ð", "d", 0, "this")] + MISREAD_ERRORS
+    prompt = build_prompt(make_report(errors), version="v3")
+    assert '"buy"' in prompt
+    assert "read as" in prompt
+    assert "do not explain individual sounds" in prompt.lower()
+    assert "/b/" not in prompt

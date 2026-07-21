@@ -1,0 +1,82 @@
+[
+  {
+    "phoneme": "v",
+    "id": "fallback_v",
+    "phenomenon": "general articulation guidance for /v/",
+    "articulation_tip": "Touch your upper front teeth lightly to your lower lip, leaving a narrow gap. Push air through that gap while voicing (your throat should buzz).",
+    "practice_words": [{"word": "van", "target_phoneme": "v"}],
+    "citation": ""
+  },
+  {
+    "phoneme": "f",
+    "id": "fallback_f",
+    "phenomenon": "general articulation guidance for /f/",
+    "articulation_tip": "Touch your upper front teeth lightly to your lower lip, leaving a narrow gap. Push air through that gap without voicing (no buzzing in your throat).",
+    "practice_words": [{"word": "fan", "target_phoneme": "f"}],
+    "citation": ""
+  },
+  {
+    "phoneme": "ŋ",
+    "id": "fallback_ng",
+    "phenomenon": "general articulation guidance for /ŋ/",
+    "articulation_tip": "Raise the back of your tongue to touch your soft palate (the soft part at the back of the roof of your mouth), fully blocking your mouth. Let the air and voice flow out through your nose instead.",
+    "practice_words": [{"word": "sing", "target_phoneme": "ŋ"}],
+    "citation": ""
+  },
+  {
+    "phoneme": "ʒ",
+    "id": "fallback_zh",
+    "phenomenon": "general articulation guidance for /ʒ/",
+    "articulation_tip": "Raise the blade of your tongue toward the area slightly behind the ridge (a little further back than for /z/), round your lips slightly, and push voiced air through the gap.",
+    "practice_words": [{"word": "vision", "target_phoneme": "ʒ"}],
+    "citation": ""
+  },
+  {
+    "phoneme": "æ",
+    "id": "fallback_ae",
+    "phenomenon": "general articulation guidance for /æ/",
+    "articulation_tip": "Open your jaw fairly wide and keep your tongue low, with the front of your tongue pushed slightly forward. Keep your lips relaxed and unrounded, not pulled into a smile.",
+    "practice_words": [{"word": "cat", "target_phoneme": "æ"}],
+    "citation": ""
+  },
+  {
+    "phoneme": "ʌ",
+    "id": "fallback_uh",
+    "phenomenon": "general articulation guidance for /ʌ/",
+    "articulation_tip": "Keep your jaw at a middle, relaxed height and let your tongue rest low in the center of your mouth, neither raised nor pushed forward or back. Keep your lips relaxed and unrounded.",
+    "practice_words": [{"word": "cup", "target_phoneme": "ʌ"}],
+    "citation": ""
+  },
+  {
+    "phoneme": "θ",
+    "id": "fallback_theta",
+    "phenomenon": "general articulation guidance for /θ/",
+    "articulation_tip": "Place the tip of your tongue lightly between your upper and lower front teeth (or just touching the back of your upper front teeth) and push air through the narrow gap without voicing.",
+    "practice_words": [{"word": "think", "target_phoneme": "θ"}],
+    "citation": ""
+  },
+  {
+    "phoneme": "ð",
+    "id": "fallback_eth",
+    "phenomenon": "general articulation guidance for /ð/",
+    "articulation_tip": "Place the tip of your tongue lightly between your upper and lower front teeth (or just touching the back of your upper front teeth) and push air through the narrow gap while voicing (your throat should buzz).",
+    "practice_words": [{"word": "this", "target_phoneme": "ð"}],
+    "citation": ""
+  },
+  {
+    "phoneme": "ɹ",
+    "id": "fallback_r",
+    "phenomenon": "general articulation guidance for /ɹ/",
+    "articulation_tip": "Curl the tip of your tongue up and back, or bunch its body up, without letting it touch the roof of your mouth. Round your lips slightly and voice while air flows over the tongue smoothly, with no friction.",
+    "practice_words": [{"word": "right", "target_phoneme": "ɹ"}],
+    "citation": ""
+  },
+  {
+    "phoneme": "l",
+    "id": "fallback_l",
+    "phenomenon": "general articulation guidance for /l/",
+    "articulation_tip": "Touch the tip of your tongue firmly to the ridge just behind your upper front teeth, and let voiced air flow out along both sides of your tongue.",
+    "practice_words": [{"word": "light", "target_phoneme": "l"}],
+    "citation": ""
+  }
+]

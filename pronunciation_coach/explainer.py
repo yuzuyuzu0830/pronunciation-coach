@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import requests
 
-from pronunciation_coach.types import DiagnosisReport, PhonemeError
+from pronunciation_coach.knowledge import match_knowledge
+from pronunciation_coach.types import DiagnosisReport, KnowledgeRecord, PhonemeError
 
 DEFAULT_MODEL = "llama3.2:3b"
 DEFAULT_BASE_URL = "http://localhost:11434"
@@ -42,7 +43,37 @@ separate final section after the numbered items; never drop it.
 on describing what happened and giving a practice method.
 - Explain in simple, plain English without specialised phonetic jargon."""
 
-_ROLE_INSTRUCTIONS = {"v1": _ROLE_INSTRUCTION_V1, "v2": _ROLE_INSTRUCTION_V2}
+# v3: structured-knowledge injection (docs/design_3c.md §5). Detection- and
+# structure-related v2 rules still apply; the role is narrowed from "explain"
+# to "rephrase pre-written material", since build_prompt now supplies a cause
+# and tip for the errors it can classify (§0: fixes 3b's fabricated symbols
+# and dubious L1 generalizations by not leaving that content to the model).
+_ROLE_INSTRUCTION_V3 = """\
+You are a pronunciation coach for English learners.
+A separate acoustic system has already detected the pronunciation errors \
+listed below. For each error, you are given a pre-written cause and practice \
+tip when available. Your job is only to rephrase the given material into \
+natural, encouraging coaching language:
+- Do not re-judge, add, or remove errors.
+- Do not invent facts, phoneme symbols, causes, or practice words beyond \
+what is given below.
+- If no cause or tip is given for an error, state only that the error \
+occurred and do not speculate about why.
+- Do not write any new phonetic or IPA symbols: quote only the symbols that \
+appear in the error list below. Refer to a reading mistake using ordinary \
+word spelling only, never symbols.
+- For the numbered error list only: keep its exact order, write one numbered \
+item per error, and start each item with the error's number from the list. \
+Do not merge, split, or repeat items.
+- If a "Possible reading mistakes" section is given, always address it in a \
+separate final section after the numbered items; never drop it.
+- Explain in simple, plain English without specialised phonetic jargon."""
+
+_ROLE_INSTRUCTIONS = {
+    "v1": _ROLE_INSTRUCTION_V1,
+    "v2": _ROLE_INSTRUCTION_V2,
+    "v3": _ROLE_INSTRUCTION_V3,
+}
 PROMPT_VERSIONS = tuple(_ROLE_INSTRUCTIONS)
 DEFAULT_PROMPT_VERSION = "v1"
 
@@ -64,8 +95,86 @@ def _format_misread_notice(word: str | None, read_as: str | None) -> str:
     return f'- The word "{word}" may have been read as "{read_as}".'
 
 
+def _tier_sort_key(record: KnowledgeRecord | None) -> int:
+    if record is None:
+        return 2
+    return 0 if record.tier == "l1_specific" else 1
+
+
+def rank_errors_by_tier(
+    errors: list[PhonemeError], reference_phonemes: list[str], l1: str
+) -> list[tuple[PhonemeError, KnowledgeRecord | None]]:
+    """Pair each error with its matched knowledge record and sort by tier.
+
+    Tier order: l1_specific > phoneme_fallback > no match (docs/design_3c.md
+    §4). The sort is stable, so errors within the same tier keep their
+    original relative order — §4 does not define a secondary key. Callers
+    should pass only non-misread errors; misread words are handled
+    separately and never go through knowledge matching.
+    """
+    pairs = [
+        (error, match_knowledge(error, reference_phonemes, l1)) for error in errors
+    ]
+    return sorted(pairs, key=lambda pair: _tier_sort_key(pair[1]))
+
+
+def _format_knowledge_block(record: KnowledgeRecord) -> list[str]:
+    """Inline knowledge directly under its error (docs/design_3c.md §5): no
+    separate section for the model to (mis)associate with the wrong item.
+    Fallback-tier records have cause=None (no L1-transfer claim, §3), so the
+    Cause line is omitted rather than printed as empty/None.
+    """
+    block = [f"   Known phenomenon: {record.id}"]
+    if record.cause is not None:
+        block.append(f"   Cause: {record.cause}")
+    block.append(f"   Tip: {record.articulation_tip}")
+    words = ", ".join(
+        f"{pw.word} (/{pw.target_phoneme}/)" for pw in record.practice_words
+    )
+    block.append(f"   Practice words: {words}")
+    return block
+
+
+def _append_v3_error_section(
+    lines: list[str],
+    report: DiagnosisReport,
+    pronunciation_errors: list[PhonemeError],
+    full_explanation_limit: int,
+) -> None:
+    """v3 tiering: sort by tier, inline knowledge for the top N, facts-only
+    for the rest — every error is still listed, only the level of detail
+    differs (docs/design_3c.md §4).
+    """
+    if not pronunciation_errors:
+        return
+    ranked = rank_errors_by_tier(
+        pronunciation_errors, report.reference_phonemes, report.learner_l1
+    )
+    total = len(ranked)
+    explained = min(full_explanation_limit, total)
+    lines.append(f"Detected {total} errors, {explained} explained in detail below.")
+    lines.append("")
+    # Literal count guards against the model inventing extra items when
+    # total == 1 (regression observed in the 2026-07-20 comparison run, §5).
+    lines.append(
+        f"There are exactly {total} numbered items below (this holds even "
+        f"when {total} == 1). Output exactly {total} numbered items — do "
+        "not add an extra item such as 'no other errors were found', even "
+        "if there is only one."
+    )
+    lines.append("")
+    lines.append("Detected pronunciation errors:")
+    for i, (error, record) in enumerate(ranked, start=1):
+        lines.append(_format_error(i, error))
+        if i <= full_explanation_limit and record is not None:
+            lines.extend(_format_knowledge_block(record))
+    lines.append("")
+
+
 def build_prompt(
-    report: DiagnosisReport, version: str = DEFAULT_PROMPT_VERSION
+    report: DiagnosisReport,
+    version: str = DEFAULT_PROMPT_VERSION,
+    full_explanation_limit: int = 3,
 ) -> str:
     if version not in _ROLE_INSTRUCTIONS:
         raise ValueError(
@@ -91,7 +200,9 @@ def build_prompt(
         (e.word, e.misread_as) for e in report.errors if e.possibly_misread
     )
 
-    if pronunciation_errors:
+    if version == "v3":
+        _append_v3_error_section(lines, report, pronunciation_errors, full_explanation_limit)
+    elif pronunciation_errors:
         lines.append("Detected pronunciation errors:")
         lines.extend(
             _format_error(i, error)
@@ -106,7 +217,7 @@ def build_prompt(
         )
         lines.append("")
 
-    if pronunciation_errors:
+    if version != "v3" and pronunciation_errors:
         lines.append(
             "For each pronunciation error, explain what happened and give one "
             "practical tip to fix it, considering difficulties typical for "
@@ -131,6 +242,7 @@ class OllamaExplainer:
         base_url: str = DEFAULT_BASE_URL,
         timeout: float = 120.0,
         prompt_version: str = DEFAULT_PROMPT_VERSION,
+        full_explanation_limit: int = 3,
     ) -> None:
         if prompt_version not in _ROLE_INSTRUCTIONS:
             raise ValueError(
@@ -141,9 +253,14 @@ class OllamaExplainer:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._prompt_version = prompt_version
+        self._full_explanation_limit = full_explanation_limit
 
     def explain(self, report: DiagnosisReport) -> str:
-        prompt = build_prompt(report, version=self._prompt_version)
+        prompt = build_prompt(
+            report,
+            version=self._prompt_version,
+            full_explanation_limit=self._full_explanation_limit,
+        )
         try:
             response = requests.post(
                 f"{self._base_url}/api/generate",

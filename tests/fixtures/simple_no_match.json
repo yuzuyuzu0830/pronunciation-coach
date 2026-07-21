@@ -1,0 +1,11 @@
+{
+  "_comment": "Hand-crafted, tier3: /z/ substitution hits neither japanese.json nor phoneme_fallback.json, so it must classify as no-match (facts only, no cause/tip/practice words). Added for the v2-vs-v3 tier comparison (docs/design_3c.md §6).",
+  "transcript": "I saw the sue.",
+  "target_text": "I saw the zoo.",
+  "reference_phonemes": ["aɪ", "s", "ɔː", "ð", "ə", "z", "uː"],
+  "hypothesis_phonemes": ["aɪ", "s", "ɔː", "ð", "ə", "s", "uː"],
+  "errors": [
+    {"op": "substitution", "expected": "z", "actual": "s", "position": 5, "word": "zoo", "possibly_misread": false, "misread_as": null}
+  ],
+  "learner_l1": "Japanese"
+}

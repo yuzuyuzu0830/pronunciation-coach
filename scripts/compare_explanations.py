@@ -21,6 +21,7 @@ from pronunciation_coach.explainer import (
     PROMPT_VERSIONS,
     OllamaExplainer,
 )
+from pronunciation_coach.knowledge import match_knowledge
 from pronunciation_coach.types import DiagnosisReport, PhonemeError
 
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures"
@@ -35,6 +36,16 @@ def load_report(path: Path) -> DiagnosisReport:
     return DiagnosisReport(errors=errors, **data)
 
 
+def _error_tier(error: PhonemeError, report: DiagnosisReport) -> str:
+    """Tier label for the comparison log (docs/design_3c.md §6): misread
+    errors never go through knowledge matching, so they get their own label
+    rather than a misleading "none"."""
+    if error.possibly_misread:
+        return "n/a (misread)"
+    record = match_knowledge(error, report.reference_phonemes, report.learner_l1)
+    return record.tier if record is not None else "none"
+
+
 def format_conditions(name: str, report: DiagnosisReport) -> list[str]:
     lines = [
         f"## Fixture: {name}",
@@ -45,13 +56,14 @@ def format_conditions(name: str, report: DiagnosisReport) -> list[str]:
         f"- reference: `{' '.join(report.reference_phonemes)}`",
         f"- hypothesis: `{' '.join(report.hypothesis_phonemes)}`",
         "",
-        "| # | op | expected | actual | word | possibly_misread | misread_as |",
-        "|---|---|---|---|---|---|---|",
+        "| # | op | expected | actual | word | possibly_misread | misread_as | tier |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for i, e in enumerate(report.errors, start=1):
         lines.append(
             f"| {i} | {e.op} | {e.expected or ''} | {e.actual or ''} "
-            f"| {e.word or ''} | {e.possibly_misread} | {e.misread_as or ''} |"
+            f"| {e.word or ''} | {e.possibly_misread} | {e.misread_as or ''} "
+            f"| {_error_tier(e, report)} |"
         )
     lines.append("")
     return lines

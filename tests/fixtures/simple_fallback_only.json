@@ -1,0 +1,11 @@
+{
+  "_comment": "Hand-crafted, tier2: /v/ substitution is not one of japanese.json's 6 L1 patterns but is covered by phoneme_fallback.json, so it must classify as phoneme_fallback (tip + practice words, no cause). Added for the v2-vs-v3 tier comparison (docs/design_3c.md §6).",
+  "transcript": "I have a ban.",
+  "target_text": "I have a van.",
+  "reference_phonemes": ["aɪ", "h", "æ", "v", "ə", "v", "æ", "n"],
+  "hypothesis_phonemes": ["aɪ", "h", "æ", "v", "ə", "b", "æ", "n"],
+  "errors": [
+    {"op": "substitution", "expected": "v", "actual": "b", "position": 5, "word": "van", "possibly_misread": false, "misread_as": null}
+  ],
+  "learner_l1": "Japanese"
+}

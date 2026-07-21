@@ -73,3 +73,20 @@ class CoachingResult:
 
 # Pipeline outcome: coaching feedback, or a re-read request after validation.
 PipelineResult = CoachingResult | ReadingMismatch
+
+
+@dataclass(frozen=True)
+class PracticeWord:
+    word: str
+    target_phoneme: str  # verified by test against g2p.to_phonemes (docs/design_3c.md §1)
+
+
+@dataclass(frozen=True)
+class KnowledgeRecord:
+    id: str
+    phenomenon: str
+    cause: str | None  # None for phoneme_fallback tier: no L1-transfer claim made
+    articulation_tip: str
+    practice_words: list[PracticeWord]
+    citation: str  # "" means not yet recorded
+    tier: Literal["l1_specific", "phoneme_fallback"]
