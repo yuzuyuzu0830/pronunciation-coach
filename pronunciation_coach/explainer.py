@@ -180,6 +180,14 @@ def build_prompt(
         raise ValueError(
             f"Unknown prompt version {version!r}; available: {PROMPT_VERSIONS}"
         )
+    # Single source of truth for the v3-vs-legacy split, checked once here
+    # instead of comparing `version` against "v3" independently at each spot
+    # below. Two independent comparisons previously had to be kept in sync by
+    # hand (one `== "v3"`, one `!= "v3"`); a future version added to only one
+    # of them would silently mix its error-section format with the wrong
+    # trailing instruction text instead of failing loudly.
+    uses_structured_knowledge = version == "v3"
+
     lines = [_ROLE_INSTRUCTIONS[version], ""]
     lines.append(f"Learner's first language (L1): {report.learner_l1}")
     if report.target_text is not None:
@@ -200,7 +208,7 @@ def build_prompt(
         (e.word, e.misread_as) for e in report.errors if e.possibly_misread
     )
 
-    if version == "v3":
+    if uses_structured_knowledge:
         _append_v3_error_section(lines, report, pronunciation_errors, full_explanation_limit)
     elif pronunciation_errors:
         lines.append("Detected pronunciation errors:")
@@ -217,7 +225,7 @@ def build_prompt(
         )
         lines.append("")
 
-    if version != "v3" and pronunciation_errors:
+    if not uses_structured_knowledge and pronunciation_errors:
         lines.append(
             "For each pronunciation error, explain what happened and give one "
             "practical tip to fix it, considering difficulties typical for "
