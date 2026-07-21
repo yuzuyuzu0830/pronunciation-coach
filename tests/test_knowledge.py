@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 from pronunciation_coach import g2p
 from pronunciation_coach.knowledge import (
     _L1_MATCH_SPECS,
+    _L1_RULES_DIR,
     _matches,
     load_l1_rules,
     load_phoneme_fallback,
@@ -34,6 +37,34 @@ def test_load_l1_rules_returns_the_six_patterns_tagged_l1_specific():
 
 def test_load_l1_rules_unknown_l1_returns_empty_list():
     assert load_l1_rules("Klingon") == []
+
+
+def test_l1_rule_ids_and_matchspecs_are_in_bidirectional_agreement():
+    """Regression test for the 2026-07-21 incident: japanese.json's ids were
+    hand-edited independently of knowledge.py's hardcoded _L1_MATCH_SPECS
+    table (parenthetical suffixes added, one id reverted to an old name) and
+    silently diverged, so match_knowledge() raised KeyError for 4 of 6
+    patterns. _L1_MATCH_SPECS stays a hardcoded Python table for now rather
+    than JSON-driven (see docs/devlog.md 2026-07-21 backlog note); this test
+    is the cheap substitute for a compile-time link between the two files —
+    it reads every l1_rules/*.json directly, independent of match_knowledge's
+    own fail-fast check, so it fails on a mismatch instead of relying on some
+    other test to happen to exercise the broken id.
+    """
+    json_ids: set[str] = set()
+    for path in _L1_RULES_DIR.glob("*.json"):
+        json_ids.update(record["id"] for record in json.loads(path.read_text()))
+
+    spec_ids = set(_L1_MATCH_SPECS)
+
+    assert json_ids <= spec_ids, (
+        f"ids present in l1_rules/*.json with no _L1_MATCH_SPECS entry: "
+        f"{json_ids - spec_ids}"
+    )
+    assert spec_ids <= json_ids, (
+        f"_L1_MATCH_SPECS entries unused by any l1_rules/*.json id: "
+        f"{spec_ids - json_ids}"
+    )
 
 
 def test_load_phoneme_fallback_tagged_phoneme_fallback_with_no_cause():

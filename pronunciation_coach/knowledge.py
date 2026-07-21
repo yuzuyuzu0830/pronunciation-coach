@@ -31,7 +31,9 @@ _PHONEME_FALLBACK_PATH = _DATA_DIR / "phoneme_fallback.json"
 # used to test MatchSpec.actual == "ANY_VOWEL" for vowel_epenthesis. Known
 # limitation (docs/design_3c.md §7): this also matches non-linguistic vowel
 # insertions (e.g. an utterance-initial breath), since word-boundary info is
-# out of scope for this module (§2).
+# out of scope for this module (§2). Maintained independently of g2p.py's
+# EQUIVALENCE_CLASSES — if that table ever gains/renames a vowel symbol, this
+# set must be updated to match or vowel_epenthesis matching silently drifts.
 _VOWELS = frozenset(
     {
         "i", "iː", "ɪ", "e", "ɛ", "æ", "ɑ", "ɑː", "ɒ", "ɔ", "ɔː",
