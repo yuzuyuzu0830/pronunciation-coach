@@ -1,0 +1,68 @@
+[
+  {
+    "id": "dh_stopping",
+    "phenomenon": "ð→d substitution (dental stopping)",
+    "cause": "Japanese has no 'th' sounds, so the voiced 'th' /ð/ is often replaced with /d/ or /z/, which are the closest sounds in Japanese",
+    "articulation_tip": "Place the tip of your tongue lightly between your front teeth and let the air flow out while your voice is on. If your tongue stays behind your teeth, the sound becomes /d/.",
+    "practice_words": [
+      {"word": "this", "target_phoneme": "ð"},
+      {"word": "that", "target_phoneme": "ð"}
+    ],
+    "citation": "Swan & Smith (2001) Learner English, ch. Japanese; Shahin et al. (2025) Table 5 (d/dh confusion in L2-ARCTIC)"
+  },
+  {
+    "id": "th_sibilant_substitution",
+    "phenomenon": "θ→s substitution",
+    "cause": "Japanese has no 'th' sounds, so the voiceless 'th' /θ/ is often replaced with /s/, the closest Japanese sound2",
+    "articulation_tip": "Place the tip of your tongue between your front teeth and blow air gently, without using your voice. If your tongue stays behind your teeth, the sound becomes /s/.",
+    "practice_words": [
+      {"word": "think", "target_phoneme": "θ"},
+      {"word": "three", "target_phoneme": "θ"}
+    ],
+    "citation": "Swan & Smith (2001) Learner English, ch. Japanese; Shahin et al. (2025) Table 5 (s/th confusion in L2-ARCTIC)"
+  },
+  {
+    "id": "liquid_confusion",
+    "phenomenon": "l/ɹ confusion",
+    "cause": "Japanese has only one liquid sound, which is between English /l/ and /r/. Japanese learners therefore often find it hard to hear and produce the difference between them.",
+    "articulation_tip": "For /l/, press the tip of your tongue firmly against the ridge behind your upper front teeth. For /r/, pull the tongue tip back so it touches nothing at all. The key difference is tongue contact: /l/ touches, /r/ does not.",
+    "practice_words": [
+      {"word": "light", "target_phoneme": "l"},
+      {"word": "right", "target_phoneme": "ɹ"}
+    ],
+    "citation": "Goto (1971) Neuropsychologia 9(3); Bradlow et al. (1997) JASA; Swan & Smith (2001) ch. Japanese"
+  },
+  {
+    "id": "si_palatalization",
+    "phenomenon": "si→ʃi palatalization before a front vowel",
+    "cause": "In Japanese, /s/ automatically becomes a 'sh'-like sound before the vowel /i/ (as in し 'shi'). This habit often carries over to English words like 'see' or 'sit'.",
+    "articulation_tip": "Keep the tip of your tongue close to your upper front teeth and smile slightly when saying /s/ before /i/. If the middle of your tongue rises toward the roof of your mouth, the sound becomes 'sh'.",
+    "practice_words": [
+      {"word": "see", "target_phoneme": "s"},
+      {"word": "sit", "target_phoneme": "s"}
+    ],
+    "citation": "Swan & Smith (2001) ch. Japanese; Ohata (2004) Asian EFL Journal 6(4)"
+  },
+  {
+    "id": "vowel_epenthesis",
+    "phenomenon": "vowel insertion in consonant clusters / word-final position",
+    "cause": "An extra vowel may have been inserted here. Japanese syllables usually end in a vowel, so learners often insert small vowels after final consonants or between consonant clusters (for example, 'desk' becoming 'desuku'). Note that this can also simply be a false start or a breath sound.",
+    "articulation_tip": "Try ending the word on the consonant itself: close your mouth for the final consonant and stop, without adding any vowel sound after it.",
+    "practice_words": [
+      {"word": "desk", "target_phoneme": "k"},
+      {"word": "bag", "target_phoneme": "ɡ"}
+    ],
+    "citation": "Dupoux et al. (1999) JEP:HPP 25(6); Swan & Smith (2001) ch. Japanese"
+  },
+  {
+    "id": "vowel_length_mismatch",
+    "phenomenon": "vowel length mismatch (same vowel quality, ː presence differs)",
+    "cause": "In Japanese, vowel length alone changes the meaning of a word, and long/short vowels differ mainly in duration. English long and short vowels differ in both length and quality, so the distinction works differently and is often hard for Japanese learners.",
+    "articulation_tip": "For long vowels like /iː/ or /uː/, hold the vowel clearly longer and keep your mouth position steady all the way through",
+    "practice_words": [
+      {"word": "food", "target_phoneme": "uː"},
+      {"word": "beat", "target_phoneme": "iː"}
+    ],
+    "citation": "Swan & Smith (2001) ch. Japanese; Ohata (2004)"
+  }
+]
