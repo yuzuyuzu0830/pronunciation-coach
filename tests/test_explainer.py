@@ -1,6 +1,12 @@
 import pytest
 
-from pronunciation_coach.explainer import build_prompt, rank_errors_by_tier
+from pronunciation_coach.explainer import (
+    OllamaExplainer,
+    build_prompt,
+    format_facts_only_error,
+    rank_errors_by_tier,
+    render_facts_only_section,
+)
 from pronunciation_coach.types import DiagnosisReport, PhonemeError
 
 
@@ -249,10 +255,12 @@ def test_v3_header_reports_total_and_explained_counts():
     assert "Detected 3 errors, 2 explained in detail below." in prompt
 
 
-def test_v3_item_count_literal_matches_total_errors():
+def test_v3_item_count_literal_matches_explained_count():
+    """The literal count covers only the items actually in the prompt: the
+    unmatched "wordx" error is facts-only and no longer sent to the LLM."""
     prompt = build_prompt(make_v3_report(V3_ERRORS), version="v3")
-    assert "There are exactly 3 numbered items below" in prompt
-    assert "Output exactly 3 numbered items" in prompt
+    assert "There are exactly 2 numbered items below" in prompt
+    assert "Output exactly 2 numbered items" in prompt
 
 
 def test_v3_item_count_literal_handles_a_single_error_without_extra_items():
@@ -266,30 +274,40 @@ def test_v3_item_count_literal_handles_a_single_error_without_extra_items():
 
 def test_v3_orders_items_by_tier_not_by_detection_order():
     prompt = build_prompt(make_v3_report(V3_ERRORS), version="v3")
-    assert prompt.index('"this"') < prompt.index('"van"') < prompt.index('"wordx"')
+    assert prompt.index('"this"') < prompt.index('"van"')
 
 
-def test_v3_embeds_knowledge_only_for_items_within_the_limit():
+def test_v3_facts_only_items_are_not_sent_in_the_prompt():
+    """Unmatched errors have nothing to rephrase; leaving them in the prompt
+    made the model invent tips for them (2026-07-22 comparison run)."""
+    prompt = build_prompt(
+        make_v3_report(V3_ERRORS), version="v3", full_explanation_limit=3
+    )
+    assert '"wordx"' not in prompt
+    assert "/x/" not in prompt
+    assert "/y/" not in prompt
+
+
+def test_v3_matched_item_beyond_the_limit_is_facts_only_too():
     prompt = build_prompt(
         make_v3_report(V3_ERRORS), version="v3", full_explanation_limit=1
     )
     # Tier-sorted rank 1 is "this" (l1_specific); "van" (fallback, rank 2)
-    # must not get a knowledge block when the limit is 1.
-    assert "Known phenomenon: dh_stopping" in prompt
-    assert "Known phenomenon: fallback_v" not in prompt
+    # falls outside the limit and must not be sent to the LLM at all.
+    assert '"this"' in prompt
+    assert '"van"' not in prompt
 
 
-def test_v3_unmatched_item_never_gets_a_knowledge_block():
-    prompt = build_prompt(
-        make_v3_report(V3_ERRORS), version="v3", full_explanation_limit=3
-    )
-    lines = prompt.splitlines()
-    wordx_index = next(i for i, line in enumerate(lines) if '"wordx"' in line)
-    trailing = lines[wordx_index + 1 :]
-    assert not any(line.strip().startswith("Known phenomenon") for line in trailing)
+def test_v3_known_phenomenon_line_uses_human_readable_name_not_id():
+    prompt = build_prompt(make_v3_report(V3_ERRORS), version="v3")
+    assert "Known phenomenon: ð→d substitution (dental stopping)" in prompt
+    assert "dh_stopping" not in prompt
 
 
-def test_v3_fallback_tier_item_has_tip_but_no_cause_line():
+def test_v3_fallback_tier_item_has_tip_but_no_cause_or_phenomenon_line():
+    """Fallback records make no L1 claim and their machine id must not leak
+    into learner-facing text ("fallback_v" was quoted verbatim in the
+    2026-07-22 run), so the block is Tip + Practice words only."""
     prompt = build_prompt(
         make_v3_report(V3_ERRORS), version="v3", full_explanation_limit=3
     )
@@ -301,9 +319,116 @@ def test_v3_fallback_tier_item_has_tip_but_no_cause_line():
         if stripped == "" or stripped[:1].isdigit():
             break
         block.append(stripped)
-    assert any(line.startswith("Known phenomenon: fallback_v") for line in block)
     assert any(line.startswith("Tip:") for line in block)
     assert not any(line.startswith("Cause:") for line in block)
+    assert not any(line.startswith("Known phenomenon") for line in block)
+
+
+def test_v3_role_instruction_preserves_uncertainty_in_causes():
+    prompt = build_prompt(make_v3_report(V3_ERRORS), version="v3")
+    assert "you must preserve them in your rephrasing" in prompt
+    assert "do not present an uncertain cause as certain" in prompt
+
+
+def test_v3_prompt_with_only_facts_only_errors_forbids_describing_them():
+    """When no error has matched knowledge (M=0), the LLM sees no error
+    details at all and must not try to reconstruct them."""
+    only_unmatched = [PhonemeError("substitution", "x", "y", 0, "wordx")]
+    prompt = build_prompt(make_v3_report(only_unmatched), version="v3")
+    assert "Detected 1 errors, 0 explained in detail below." in prompt
+    assert "There are exactly" not in prompt
+    assert '"wordx"' not in prompt
+    assert "Do not describe or guess" in prompt
+
+
+# --- facts-only template: deterministic, LLM-free rendering ---
+
+
+def test_facts_only_template_covers_all_op_types():
+    sub = PhonemeError("substitution", "ð", "d", 0, "this")
+    dele = PhonemeError("deletion", "s", None, 2, "this")
+    ins = PhonemeError("insertion", None, "ɯ", 6, "high")
+    assert (
+        format_facts_only_error(sub)
+        == 'In the word "this", expected /ð/ but heard /d/.'
+    )
+    assert (
+        format_facts_only_error(dele)
+        == 'In the word "this", expected /s/ but it was missing.'
+    )
+    assert (
+        format_facts_only_error(ins)
+        == 'In the word "high", an extra /ɯ/ was added.'
+    )
+
+
+def test_facts_only_template_falls_back_to_position_without_word():
+    err = PhonemeError("substitution", "ð", "d", 3, None)
+    assert format_facts_only_error(err) == "At position 3, expected /ð/ but heard /d/."
+
+
+def test_render_facts_only_section_lists_each_error_as_a_bullet():
+    errors = [
+        PhonemeError("substitution", "x", "y", 0, "wordx"),
+        PhonemeError("insertion", None, "ɯ", 6, "high"),
+    ]
+    section = render_facts_only_section(errors)
+    assert section.splitlines()[0] == "Other detected differences:"
+    assert '- In the word "wordx", expected /x/ but heard /y/.' in section
+    assert '- In the word "high", an extra /ɯ/ was added.' in section
+
+
+def test_render_facts_only_section_is_empty_without_errors():
+    assert render_facts_only_section([]) == ""
+
+
+# --- explain(): deterministic facts-only section appended after LLM output ---
+
+
+class _FakeOllamaResponse:
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"response": "LLM TEXT"}
+
+
+def _fake_ollama(monkeypatch, captured):
+    def fake_post(url, json=None, timeout=None):
+        captured["prompt"] = json["prompt"]
+        return _FakeOllamaResponse()
+
+    monkeypatch.setattr(
+        "pronunciation_coach.explainer.requests.post", fake_post
+    )
+
+
+def test_v3_explain_appends_facts_only_section_after_llm_output(monkeypatch):
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3")
+    out = explainer.explain(make_v3_report(V3_ERRORS))
+    assert out.startswith("LLM TEXT")
+    assert "Other detected differences:" in out
+    assert '- In the word "wordx", expected /x/ but heard /y/.' in out
+    assert '"wordx"' not in captured["prompt"]
+
+
+def test_v3_explain_appends_nothing_when_every_error_is_fully_explained(monkeypatch):
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3")
+    matched_only = [PhonemeError("substitution", "ð", "d", 2, "this")]
+    out = explainer.explain(make_v3_report(matched_only))
+    assert out == "LLM TEXT"
+
+
+def test_v2_explain_never_appends_facts_only_section(monkeypatch):
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v2")
+    out = explainer.explain(make_v3_report(V3_ERRORS))
+    assert out == "LLM TEXT"
 
 
 def test_v3_misread_section_keeps_v2_word_level_notice_format():

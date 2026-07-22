@@ -13,7 +13,7 @@
   {
     "id": "th_sibilant_substitution",
     "phenomenon": "θ→s substitution",
-    "cause": "Japanese has no 'th' sounds, so the voiceless 'th' /θ/ is often replaced with /s/, the closest Japanese sound2",
+    "cause": "Japanese has no 'th' sounds, so the voiceless 'th' /θ/ is often replaced with /s/, the closest Japanese sound",
     "articulation_tip": "Place the tip of your tongue between your front teeth and blow air gently, without using your voice. If your tongue stays behind your teeth, the sound becomes /s/.",
     "practice_words": [
       {"word": "think", "target_phoneme": "θ"},

@@ -48,6 +48,9 @@ on describing what happened and giving a practice method.
 # to "rephrase pre-written material", since build_prompt now supplies a cause
 # and tip for the errors it can classify (§0: fixes 3b's fabricated symbols
 # and dubious L1 generalizations by not leaving that content to the model).
+# Errors without matched knowledge never reach the LLM at all — they are
+# rendered deterministically by render_facts_only_section (2026-07-22 run:
+# the model invented tips exactly for those facts-only items).
 _ROLE_INSTRUCTION_V3 = """\
 You are a pronunciation coach for English learners.
 A separate acoustic system has already detected the pronunciation errors \
@@ -57,6 +60,9 @@ natural, encouraging coaching language:
 - Do not re-judge, add, or remove errors.
 - Do not invent facts, phoneme symbols, causes, or practice words beyond \
 what is given below.
+- If the given cause mentions uncertainty or alternative explanations, you \
+must preserve them in your rephrasing — do not present an uncertain cause \
+as certain.
 - If no cause or tip is given for an error, state only that the error \
 occurred and do not speculate about why.
 - Do not write any new phonetic or IPA symbols: quote only the symbols that \
@@ -122,9 +128,14 @@ def _format_knowledge_block(record: KnowledgeRecord) -> list[str]:
     """Inline knowledge directly under its error (docs/design_3c.md §5): no
     separate section for the model to (mis)associate with the wrong item.
     Fallback-tier records have cause=None (no L1-transfer claim, §3), so the
-    Cause line is omitted rather than printed as empty/None.
+    Cause line is omitted rather than printed as empty/None; their phenomenon
+    line is omitted too, since machine ids must not leak into learner-facing
+    text ("fallback_v" was quoted verbatim in the 2026-07-22 run). For
+    l1_specific records the human-readable phenomenon name is used, not the id.
     """
-    block = [f"   Known phenomenon: {record.id}"]
+    block = []
+    if record.tier == "l1_specific":
+        block.append(f"   Known phenomenon: {record.phenomenon}")
     if record.cause is not None:
         block.append(f"   Cause: {record.cause}")
     block.append(f"   Tip: {record.articulation_tip}")
@@ -135,39 +146,122 @@ def _format_knowledge_block(record: KnowledgeRecord) -> list[str]:
     return block
 
 
+def format_facts_only_error(error: PhonemeError) -> str:
+    """Deterministic learner-facing sentence for a facts-only error.
+
+    Pure function, never routed through the LLM: the 2026-07-22 comparison
+    run showed the model inventing tips and positional claims precisely for
+    the items it was told to state facts about.
+    """
+    location = (
+        f'In the word "{error.word}"'
+        if error.word
+        else f"At position {error.position}"
+    )
+    if error.op == "substitution":
+        return f"{location}, expected /{error.expected}/ but heard /{error.actual}/."
+    if error.op == "deletion":
+        return f"{location}, expected /{error.expected}/ but it was missing."
+    return f"{location}, an extra /{error.actual}/ was added."
+
+
+def render_facts_only_section(errors: list[PhonemeError]) -> str:
+    """Render the facts-only errors as the section appended after the LLM
+    output. Empty input renders nothing (no dangling heading)."""
+    if not errors:
+        return ""
+    lines = ["Other detected differences:"]
+    lines.extend(f"- {format_facts_only_error(error)}" for error in errors)
+    return "\n".join(lines)
+
+
+def _split_full_and_facts_only(
+    pronunciation_errors: list[PhonemeError],
+    reference_phonemes: list[str],
+    l1: str,
+    full_explanation_limit: int,
+) -> tuple[list[tuple[PhonemeError, KnowledgeRecord]], list[PhonemeError]]:
+    """Split errors into LLM-bound (top N *with* matched knowledge) and
+    facts-only (no knowledge, or matched but beyond the limit).
+
+    An unmatched error gives the model nothing to rephrase, so it is
+    facts-only even when it ranks inside the limit. rank_errors_by_tier puts
+    all matched errors before unmatched ones, so the first min(limit,
+    matched) pairs are exactly the full-explanation set.
+    """
+    ranked = rank_errors_by_tier(pronunciation_errors, reference_phonemes, l1)
+    matched = sum(1 for _, record in ranked if record is not None)
+    full_count = min(full_explanation_limit, matched)
+    return ranked[:full_count], [error for error, _ in ranked[full_count:]]
+
+
+def _facts_only_errors(
+    report: DiagnosisReport, full_explanation_limit: int
+) -> list[PhonemeError]:
+    pronunciation_errors = [e for e in report.errors if not e.possibly_misread]
+    if not pronunciation_errors:
+        return []
+    _, facts_only = _split_full_and_facts_only(
+        pronunciation_errors,
+        report.reference_phonemes,
+        report.learner_l1,
+        full_explanation_limit,
+    )
+    return facts_only
+
+
 def _append_v3_error_section(
     lines: list[str],
     report: DiagnosisReport,
     pronunciation_errors: list[PhonemeError],
     full_explanation_limit: int,
 ) -> None:
-    """v3 tiering: sort by tier, inline knowledge for the top N, facts-only
-    for the rest — every error is still listed, only the level of detail
-    differs (docs/design_3c.md §4).
+    """v3 tiering: only the top-N errors with matched knowledge go to the LLM
+    for rephrasing; facts-only errors are excluded from the prompt entirely
+    and rendered by render_facts_only_section after the LLM output
+    (docs/design_3c.md §4/§5, revised after the 2026-07-22 comparison run).
     """
     if not pronunciation_errors:
         return
-    ranked = rank_errors_by_tier(
-        pronunciation_errors, report.reference_phonemes, report.learner_l1
+    full_pairs, _ = _split_full_and_facts_only(
+        pronunciation_errors,
+        report.reference_phonemes,
+        report.learner_l1,
+        full_explanation_limit,
     )
-    total = len(ranked)
-    explained = min(full_explanation_limit, total)
+    total = len(pronunciation_errors)
+    explained = len(full_pairs)
     lines.append(f"Detected {total} errors, {explained} explained in detail below.")
     lines.append("")
+    if not full_pairs:
+        # M=0: the LLM sees no error details, so forbid reconstructing them
+        # from the transcript; the factual list is appended deterministically.
+        lines.append(
+            "No errors are listed for detailed explanation. Do not describe "
+            "or guess any specific sounds or errors; briefly encourage the "
+            "learner to keep practicing. A factual list of the detected "
+            "differences will be shown to the learner separately."
+        )
+        lines.append("")
+        return
     # Literal count guards against the model inventing extra items when
-    # total == 1 (regression observed in the 2026-07-20 comparison run, §5).
+    # explained == 1 (regression observed in the 2026-07-20 comparison run, §5).
     lines.append(
-        f"There are exactly {total} numbered items below (this holds even "
-        f"when {total} == 1). Output exactly {total} numbered items — do "
+        f"There are exactly {explained} numbered items below (this holds even "
+        f"when {explained} == 1). Output exactly {explained} numbered items — do "
         "not add an extra item such as 'no other errors were found', even "
         "if there is only one."
     )
+    if explained < total:
+        lines.append(
+            "Any remaining differences beyond these items are shown to the "
+            "learner separately; do not mention, guess, or explain them."
+        )
     lines.append("")
     lines.append("Detected pronunciation errors:")
-    for i, (error, record) in enumerate(ranked, start=1):
+    for i, (error, record) in enumerate(full_pairs, start=1):
         lines.append(_format_error(i, error))
-        if i <= full_explanation_limit and record is not None:
-            lines.extend(_format_knowledge_block(record))
+        lines.extend(_format_knowledge_block(record))
     lines.append("")
 
 
@@ -288,4 +382,11 @@ class OllamaExplainer:
             raise KeyError(
                 f"Ollama response missing 'response' field: {sorted(payload)}"
             )
-        return payload["response"]
+        text = payload["response"]
+        if self._prompt_version == "v3":
+            section = render_facts_only_section(
+                _facts_only_errors(report, self._full_explanation_limit)
+            )
+            if section:
+                text = text.rstrip() + "\n\n" + section
+        return text
