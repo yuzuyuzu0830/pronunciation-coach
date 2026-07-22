@@ -148,14 +148,77 @@ def test_to_phonemes_by_word_many_matches_single_calls():
 
 @requires_espeak
 def test_to_phonemes_by_word_many_returns_value_error_per_bad_text(monkeypatch):
-    """One word-count mismatch must not prevent pairing the other texts."""
+    """One text whose fallback also fails must not prevent pairing the others."""
 
     def fake_raw(texts: list[str]):
-        # First text: one phoneme group for two words -> mismatch.
-        # Second text: normal single-word output.
-        return ["w ɔː ɾ ɚ", "w ɔː ɾ ɚ"]
+        if texts == ["this water", "water"]:
+            # Batched primary call: "this water" merges into one group
+            # (mismatch, triggers the per-word fallback); "water" is fine.
+            return ["w ɔː ɾ ɚ", "w ɔː ɾ ɚ"]
+        if texts == ["this", "water"]:
+            # Fallback for "this water": "this" itself yields two groups
+            # (unresolvable) -- ValueError must still be scoped to that text.
+            return ["x|y", "w ɔː ɾ ɚ"]
+        raise AssertionError(f"unexpected phonemize call: {texts}")
 
     monkeypatch.setattr(g2p_module, "_phonemize_raw", fake_raw)
     results = to_phonemes_by_word_many(["this water", "water"])
     assert isinstance(results[0], ValueError)
     assert results[1] == [("water", ["w", "ɔː", "ɾ", "ɚ"])]
+
+
+# --- word-boundary-loss fallback (docs/devlog.md 2026-07-22) ---
+
+
+def test_to_phonemes_by_word_falls_back_when_separator_is_dropped(monkeypatch):
+    """espeak-ng sometimes merges short function-word pairs into one group
+    (e.g. "did not" observed as a single group instead of two); falling back
+    to per-word phonemization must recover the correct word boundary."""
+
+    def fake_raw(texts: list[str]):
+        if texts == ["did not"]:
+            return ["d ɪ d n ɑː t"]  # merged: one group for two words
+        if texts == ["did", "not"]:
+            return ["d ɪ d", "n ɑː t"]  # per-word: correct
+        raise AssertionError(f"unexpected phonemize call: {texts}")
+
+    monkeypatch.setattr(g2p_module, "_phonemize_raw", fake_raw)
+    assert to_phonemes_by_word("did not") == [
+        ("did", ["d", "ɪ", "d"]),
+        ("not", ["n", "ɑː", "t"]),
+    ]
+
+
+def test_to_phonemes_by_word_raises_when_fallback_also_fails(monkeypatch):
+    """ValueError is raised only when even per-word phonemization can't
+    produce one group per word (not merely on the initial mismatch)."""
+
+    def fake_raw(texts: list[str]):
+        if texts == ["a b"]:
+            return ["x"]  # 1 group for 2 words -> triggers fallback
+        if texts == ["a", "b"]:
+            return ["x|y", "z"]  # "a" alone still yields 2 groups
+        raise AssertionError(f"unexpected phonemize call: {texts}")
+
+    monkeypatch.setattr(g2p_module, "_phonemize_raw", fake_raw)
+    with pytest.raises(ValueError, match="'a'"):
+        to_phonemes_by_word("a b")
+
+
+@requires_espeak
+@pytest.mark.parametrize(
+    "text",
+    [
+        "did not",
+        "there was",
+        "mark is not a farmer",
+        "where was the knife",
+    ],
+)
+def test_to_phonemes_by_word_recovers_real_word_boundary_loss(text):
+    """Real espeak-ng integration check: these phrases were confirmed
+    (2026-07-22, against speechocean762) to merge word boundaries in a
+    single batched call; the fallback must still return one entry per word."""
+    result = to_phonemes_by_word(text)
+    assert [word for word, _ in result] == text.split()
+    assert all(phones for _, phones in result)

@@ -44,11 +44,26 @@ def is_mispronounced(accuracy: float, threshold: float = ACCURACY_THRESHOLD_DEFA
     return accuracy < threshold
 
 
-def speaker_id_from_utt_id(utt_id: str) -> str:
-    """First four digits of the utt id are the speaker id (WAVE/SPEAKERxxxx/...)."""
-    if len(utt_id) < 4 or not utt_id[:4].isdigit():
-        raise ValueError(f"Cannot derive speaker id from utt id {utt_id!r}")
-    return utt_id[:4]
+def parse_utt2spk(text: str) -> dict[str, str]:
+    """Parse a Kaldi-style utt2spk file: 'utt_id speaker_id' per line.
+
+    The utt id does NOT embed the speaker id as a prefix (confirmed against
+    the real corpus, 2026-07-22: e.g. utt "010610129" belongs to speaker
+    "1061", and no utt id in the corpus starts with its own speaker id) --
+    utt2spk is the only authoritative source, so speaker id must always be
+    looked up here, never derived from the utt id string.
+    """
+    mapping: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            utt_id, speaker_id = line.split()
+        except ValueError:
+            raise ValueError(f"Malformed utt2spk line (expected 'utt_id speaker_id'): {line!r}")
+        mapping[utt_id] = speaker_id
+    return mapping
 
 
 def audio_path(utt: UtteranceAnnotation, wave_root: Path) -> Path:
@@ -85,8 +100,12 @@ def _parse_word(raw: dict[str, Any]) -> WordAnnotation:
     )
 
 
-def parse_scores(raw: dict[str, Any]) -> list[UtteranceAnnotation]:
+def parse_scores(raw: dict[str, Any], speaker_by_utt: dict[str, str]) -> list[UtteranceAnnotation]:
     """Parse a speechocean762 scores.json dict into UtteranceAnnotations.
+
+    speaker_by_utt must be built from parse_utt2spk() over {train,test}/utt2spk
+    (concatenated, or looked up separately) -- scores.json itself carries no
+    speaker id, and the utt id cannot be used to derive one (see parse_utt2spk).
 
     Utt ids are sorted before parsing (dict order isn't guaranteed stable
     across json libraries/versions) so downstream sampling is reproducible.
@@ -99,10 +118,17 @@ def parse_scores(raw: dict[str, Any]) -> list[UtteranceAnnotation]:
             text = entry["text"]
         except KeyError as e:
             raise ValueError(f"Utterance {utt_id!r} missing field {e}") from e
+        try:
+            speaker_id = speaker_by_utt[utt_id]
+        except KeyError:
+            raise ValueError(
+                f"No speaker mapping for utt id {utt_id!r}; build speaker_by_utt "
+                "from {train,test}/utt2spk via parse_utt2spk()"
+            )
         utterances.append(
             UtteranceAnnotation(
                 utt_id=utt_id,
-                speaker_id=speaker_id_from_utt_id(utt_id),
+                speaker_id=speaker_id,
                 text=text,
                 words=words,
             )

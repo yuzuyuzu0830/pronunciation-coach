@@ -73,10 +73,23 @@ HYP_PHONEMES = {
     "0002030022": ["w", "ɔː", "ɾ", "ɚ"],
 }
 
+# The corpus's utt id does not embed its speaker id; scoring always looks it
+# up via utt2spk (so762.parse_utt2spk).
+SPEAKER_BY_UTT = {"0001010011": "0001", "0002030022": "0002"}
+
+
+def _write_utt2spk(tmp_path: Path) -> list[Path]:
+    path = tmp_path / "utt2spk"
+    path.write_text(
+        "\n".join(f"{utt_id} {spk}" for utt_id, spk in SPEAKER_BY_UTT.items()) + "\n",
+        encoding="utf-8",
+    )
+    return [path]
+
 
 @requires_espeak
 def test_run_stage2_computes_expected_metrics():
-    utterances = evaluate_detection.parse_scores(SCORES)
+    utterances = evaluate_detection.parse_scores(SCORES, SPEAKER_BY_UTT)
     result, judgements, skipped = evaluate_detection.run_stage2(utterances, HYP_PHONEMES, threshold=0.5)
 
     assert skipped == []
@@ -112,6 +125,7 @@ def test_cmd_score_writes_expected_output_files(tmp_path):
 
     args = evaluate_detection.argparse.Namespace(
         scores_json=scores_path,
+        utt2spk=_write_utt2spk(tmp_path),
         hyp_jsonl=hyp_path,
         utt_ids=None,
         out_dir=out_dir,
@@ -132,7 +146,7 @@ def test_cmd_score_writes_expected_output_files(tmp_path):
     assert len(judgement_lines) == 11
 
     report = (out_dir / "detection_eval_test_run.md").read_text(encoding="utf-8")
-    assert "Note on the DER definition" in report
+    assert "DER is out of scope for this corpus" in report
     assert not (out_dir / "skipped.txt").exists()
 
 
@@ -150,6 +164,7 @@ def test_cmd_score_reports_skipped_utterances_missing_from_hyp_jsonl(tmp_path):
 
     args = evaluate_detection.argparse.Namespace(
         scores_json=scores_path,
+        utt2spk=_write_utt2spk(tmp_path),
         hyp_jsonl=hyp_path,
         utt_ids=None,
         out_dir=out_dir,
@@ -174,7 +189,7 @@ def test_cmd_score_reports_skipped_utterances_missing_from_hyp_jsonl(tmp_path):
 )
 def test_run_stage2_skips_all_when_batched_g2p_raises(monkeypatch, exc):
     """Backend-level failure on the batched phonemize skips every pending utt."""
-    utterances = evaluate_detection.parse_scores(SCORES)
+    utterances = evaluate_detection.parse_scores(SCORES, SPEAKER_BY_UTT)
 
     def boom(_texts: list[str]):
         raise exc
@@ -193,7 +208,7 @@ def test_run_stage2_skips_all_when_batched_g2p_raises(monkeypatch, exc):
 
 def test_run_stage2_skips_utterance_on_per_text_word_count_mismatch(monkeypatch):
     """Word/group mismatches stay per-utterance after the batched phonemize."""
-    utterances = evaluate_detection.parse_scores(SCORES)
+    utterances = evaluate_detection.parse_scores(SCORES, SPEAKER_BY_UTT)
 
     def fake_many(texts: list[str]):
         assert len(texts) == 2
@@ -212,6 +227,142 @@ def test_run_stage2_skips_utterance_on_per_text_word_count_mismatch(monkeypatch)
     assert skipped[0].startswith("0001010011: g2p_word_count_mismatch")
     assert result.insertion_stats.utterance_count == 1
     assert judgements
+
+
+# --- sample: test-split filtering ---
+
+
+def test_cmd_sample_restricts_to_utt_ids_filter(tmp_path):
+    scores_path = tmp_path / "scores.json"
+    scores_path.write_text(json.dumps(SCORES), encoding="utf-8")
+    utt_ids_path = tmp_path / "test_split.txt"
+    utt_ids_path.write_text("0002030022\n", encoding="utf-8")  # only WATER is "test"
+    out_path = tmp_path / "sample_out.txt"
+
+    args = evaluate_detection.argparse.Namespace(
+        scores_json=scores_path,
+        utt2spk=_write_utt2spk(tmp_path),
+        utt_ids=utt_ids_path,
+        n=1,
+        seed=0,
+        out=out_path,
+    )
+    evaluate_detection._cmd_sample(args)
+
+    assert out_path.read_text(encoding="utf-8").strip() == "0002030022"
+
+
+# --- stage1 (recognize): resumable JSONL, tested with a fake recognizer ---
+
+
+class FakeRecognizer:
+    def __init__(self, phonemes_by_utt=None, raise_for=frozenset()):
+        self.phonemes_by_utt = phonemes_by_utt or {}
+        self.raise_for = raise_for
+        self.calls: list[Path] = []
+
+    def recognize(self, path: Path) -> list[str]:
+        self.calls.append(path)
+        utt_id = path.stem
+        if utt_id in self.raise_for:
+            raise RuntimeError(f"boom on {utt_id}")
+        return self.phonemes_by_utt.get(utt_id, ["x", "y"])
+
+
+def make_utterances_with_audio(tmp_path, utt_ids, missing=frozenset()):
+    """Build minimal UtteranceAnnotations and matching dummy WAVE/ files."""
+    wave_root = tmp_path / "WAVE"
+    utterances = []
+    for utt_id in utt_ids:
+        speaker_id = utt_id[:4]
+        utterances.append(
+            evaluate_detection.UtteranceAnnotation(
+                utt_id=utt_id, speaker_id=speaker_id, text="X", words=[]
+            )
+        )
+        if utt_id in missing:
+            continue
+        speaker_dir = wave_root / f"SPEAKER{speaker_id}"
+        speaker_dir.mkdir(parents=True, exist_ok=True)
+        (speaker_dir / f"{utt_id}.WAV").write_bytes(b"fake-audio")
+    return utterances, wave_root
+
+
+def test_run_stage1_recognizes_all_and_writes_jsonl(tmp_path):
+    utt_ids = ["0001000001", "0001000002", "0003000001"]
+    utterances, wave_root = make_utterances_with_audio(tmp_path, utt_ids)
+    recognizer = FakeRecognizer({"0001000001": ["a", "b"], "0003000001": ["c"]})
+    out_path = tmp_path / "hyp_phonemes.jsonl"
+
+    newly, skipped = evaluate_detection.run_stage1(utterances, wave_root, recognizer, out_path)
+
+    assert newly == 3
+    assert skipped == []
+    hyp = evaluate_detection.load_hyp_phonemes(out_path)
+    assert hyp == {
+        "0001000001": ["a", "b"],
+        "0001000002": ["x", "y"],
+        "0003000001": ["c"],
+    }
+    assert len(recognizer.calls) == 3
+
+
+def test_run_stage1_resumes_and_skips_already_processed(tmp_path):
+    """Simulates an interrupted run: rerun must not re-recognize completed utts."""
+    utt_ids = ["0001000001", "0001000002", "0001000003"]
+    utterances, wave_root = make_utterances_with_audio(tmp_path, utt_ids)
+    out_path = tmp_path / "hyp_phonemes.jsonl"
+
+    first_recognizer = FakeRecognizer(raise_for={"0001000003"})
+    newly1, skipped1 = evaluate_detection.run_stage1(utterances, wave_root, first_recognizer, out_path)
+    assert newly1 == 2  # 0001000001, 0001000002 succeed; 0001000003 fails (not written)
+    assert skipped1 == ["0001000003: recognize_failed: boom on 0001000003"]
+    assert set(first_recognizer.calls) == {
+        wave_root / "SPEAKER0001" / "0001000001.WAV",
+        wave_root / "SPEAKER0001" / "0001000002.WAV",
+        wave_root / "SPEAKER0001" / "0001000003.WAV",
+    }
+
+    # "Resume": a fresh recognizer that would raise for ALL utt ids if called --
+    # proves the already-written two are skipped, only the failed one retried.
+    second_recognizer = FakeRecognizer(raise_for={"0001000001", "0001000002", "0001000003"})
+    newly2, skipped2 = evaluate_detection.run_stage1(utterances, wave_root, second_recognizer, out_path)
+
+    assert newly2 == 0
+    assert skipped2 == ["0001000003: recognize_failed: boom on 0001000003"]
+    # Only the still-missing utt was re-attempted; the two done ones were never touched.
+    assert second_recognizer.calls == [wave_root / "SPEAKER0001" / "0001000003.WAV"]
+
+    hyp = evaluate_detection.load_hyp_phonemes(out_path)
+    assert set(hyp.keys()) == {"0001000001", "0001000002"}
+
+
+def test_run_stage1_skips_missing_audio_file(tmp_path):
+    utt_ids = ["0001000001", "0001000002"]
+    utterances, wave_root = make_utterances_with_audio(tmp_path, utt_ids, missing={"0001000002"})
+    recognizer = FakeRecognizer()
+    out_path = tmp_path / "hyp_phonemes.jsonl"
+
+    newly, skipped = evaluate_detection.run_stage1(utterances, wave_root, recognizer, out_path)
+
+    assert newly == 1
+    assert len(skipped) == 1
+    assert skipped[0].startswith("0001000002: audio_missing:")
+    assert recognizer.calls == [wave_root / "SPEAKER0001" / "0001000001.WAV"]
+
+
+def test_run_stage1_skips_on_recognizer_exception_without_aborting_others(tmp_path):
+    utt_ids = ["0001000001", "0001000002", "0001000003"]
+    utterances, wave_root = make_utterances_with_audio(tmp_path, utt_ids)
+    recognizer = FakeRecognizer(raise_for={"0001000002"})
+    out_path = tmp_path / "hyp_phonemes.jsonl"
+
+    newly, skipped = evaluate_detection.run_stage1(utterances, wave_root, recognizer, out_path)
+
+    assert newly == 2
+    assert skipped == ["0001000002: recognize_failed: boom on 0001000002"]
+    hyp = evaluate_detection.load_hyp_phonemes(out_path)
+    assert set(hyp.keys()) == {"0001000001", "0001000003"}
 
 
 def test_cmd_score_exits_when_every_utterance_g2p_fails(tmp_path, monkeypatch):
@@ -235,6 +386,7 @@ def test_cmd_score_exits_when_every_utterance_g2p_fails(tmp_path, monkeypatch):
 
     args = evaluate_detection.argparse.Namespace(
         scores_json=scores_path,
+        utt2spk=_write_utt2spk(tmp_path),
         hyp_jsonl=hyp_path,
         utt_ids=None,
         out_dir=out_dir,

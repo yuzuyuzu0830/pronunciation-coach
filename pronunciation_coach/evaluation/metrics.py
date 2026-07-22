@@ -24,17 +24,24 @@ from pronunciation_coach.evaluation.so762 import (
 )
 from pronunciation_coach.types import PhonemeError
 
-# design_eval.md §3.2: DER's adapted definition differs from Shahin et al.
-# (2025)'s feature-level DER, since this system's diagnosis IS the
-# substitution identification. Surfaced in both metrics.json and the
-# markdown report so the number is never read as directly comparable.
+# Confirmed against the real corpus (2026-07-22, docs/devlog.md): speechocean762
+# has no pronounced-phone (or equivalent) annotation of what a mispronounced
+# phone was actually replaced with, so DER's adapted definition (design_eval.md
+# §3.2 -- compare a detected substitution's content against ground truth) has
+# nothing to compare against here; der_counts.eligible is always 0 on this
+# corpus. The computation is kept (not removed) for a possible future
+# L2-ARCTIC extension where such annotations may exist. Surfaced in both
+# metrics.json and the markdown report so the 0.000 is never misread as "the
+# detector's diagnoses were all correct".
 DER_ADAPTATION_NOTE = (
-    "This DER is not the same as the feature-level DER in Shahin et al. (2025). "
-    "Because this system's diagnosis is the phoneme-substitution identification "
-    "itself, DER is redefined as the fraction of correctly detected substitution "
-    "errors (true rejects) whose substituted phoneme does not match the ground-truth "
-    "pronounced-phone (docs/design_eval.md §3.2). Do not compare this number "
-    "directly with prior work."
+    "DER is out of scope for speechocean762: the corpus provides no "
+    "pronounced-phone (or equivalent) annotation of what a mispronounced "
+    "phone was actually replaced with, so there is nothing to compare a "
+    "detected substitution's content against (confirmed against the real "
+    "corpus, 2026-07-22 -- docs/devlog.md, docs/design_eval.md §7). This "
+    "computation is retained for a possible future L2-ARCTIC extension where "
+    "such annotations may exist. Diagnostic quality on speechocean762 should "
+    "instead be assessed through user trials, not this metric."
 )
 
 

@@ -5,7 +5,6 @@ model inference (§5):
 
   sample     -- pick a reproducible utterance subset from scores.json
   recognize  -- stage1: run phoneme recognition, append to a resumable JSONL
-                (NOT YET IMPLEMENTED -- data acquisition is step 5 of §8)
   score      -- stage2: pure scoring against ground truth, no model needed
 """
 
@@ -31,7 +30,9 @@ from pronunciation_coach.evaluation.report import render_report
 from pronunciation_coach.evaluation.so762 import (
     ACCURACY_THRESHOLD_DEFAULT,
     UtteranceAnnotation,
+    audio_path,
     parse_scores,
+    parse_utt2spk,
     stratified_sample,
 )
 from pronunciation_coach.g2p import (
@@ -39,7 +40,7 @@ from pronunciation_coach.g2p import (
     to_phonemes_by_word,
     to_phonemes_by_word_many,
 )
-from pronunciation_coach.pipeline import extract_errors
+from pronunciation_coach.pipeline import PhonemeRecognizer, extract_errors
 
 
 def _git_commit_short() -> str | None:
@@ -167,9 +168,65 @@ def run_stage2(
     return result, all_judgements, skipped
 
 
+def run_stage1(
+    utterances: list[UtteranceAnnotation],
+    wave_root: Path,
+    recognizer: PhonemeRecognizer,
+    out_path: Path,
+) -> tuple[int, list[str]]:
+    """Recognize phonemes for utterances not already in out_path.
+
+    Appends one JSON line per utterance and flushes immediately, so an
+    interruption loses at most the in-flight utterance (§5): rerunning with
+    the same out_path skips whatever's already recorded there.
+    """
+    already_done = set(load_hyp_phonemes(out_path).keys()) if out_path.exists() else set()
+    skipped: list[str] = []
+    newly_processed = 0
+    with out_path.open("a", encoding="utf-8") as f:
+        for utt in utterances:
+            if utt.utt_id in already_done:
+                continue
+            path = audio_path(utt, wave_root)
+            if not path.exists():
+                skipped.append(f"{utt.utt_id}: audio_missing: {path}")
+                continue
+            try:
+                phonemes = recognizer.recognize(path)
+            except Exception as e:
+                # Model/audio failures vary widely (torch runtime errors, a
+                # corrupt WAV); skip this utterance rather than losing every
+                # already-recognized one still pending in the batch.
+                skipped.append(f"{utt.utt_id}: recognize_failed: {e}")
+                continue
+            f.write(json.dumps({"utt_id": utt.utt_id, "phonemes": phonemes}, ensure_ascii=False) + "\n")
+            f.flush()
+            newly_processed += 1
+    return newly_processed, skipped
+
+
+def _load_utterances(
+    scores_json: Path, utt2spk_paths: list[Path], utt_ids: Path | None
+) -> list[UtteranceAnnotation]:
+    """Shared loader for all three subcommands: scores.json + speaker lookup
+    (utt id does not embed speaker id -- see so762.parse_utt2spk) + optional
+    utt-id restriction (e.g. a test-split or sampled subset list)."""
+    raw = json.loads(scores_json.read_text(encoding="utf-8"))
+    speaker_by_utt: dict[str, str] = {}
+    for p in utt2spk_paths:
+        speaker_by_utt.update(parse_utt2spk(p.read_text(encoding="utf-8")))
+    utterances = parse_scores(raw, speaker_by_utt)
+    if utt_ids is not None:
+        wanted = set(utt_ids.read_text(encoding="utf-8").split())
+        utterances = [u for u in utterances if u.utt_id in wanted]
+    return utterances
+
+
 def _cmd_sample(args: argparse.Namespace) -> None:
-    raw = json.loads(args.scores_json.read_text(encoding="utf-8"))
-    utterances = parse_scores(raw)
+    # e.g. a test-split utt-id list extracted from the corpus's test/utt2spk,
+    # so sampling draws from test only (docs/design_eval.md §1.3), not
+    # scores.json's combined train+test 5000.
+    utterances = _load_utterances(args.scores_json, args.utt2spk, args.utt_ids)
     selected = stratified_sample(utterances, args.n, args.seed)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text("\n".join(u.utt_id for u in selected) + "\n", encoding="utf-8")
@@ -177,18 +234,27 @@ def _cmd_sample(args: argparse.Namespace) -> None:
 
 
 def _cmd_recognize(args: argparse.Namespace) -> None:
-    raise NotImplementedError(
-        "stage1 (phoneme recognition + resumable JSONL) is step 5 of docs/design_eval.md §8, "
-        "pending speechocean762 data acquisition. Not implemented yet."
-    )
+    utterances = _load_utterances(args.scores_json, args.utt2spk, args.utt_ids)
+
+    # Imported lazily: recognize is the only subcommand needing torch/transformers;
+    # sample/score stay usable without loading that heavy dependency.
+    from pronunciation_coach.phoneme_recognizer import Wav2Vec2PhonemeRecognizer
+
+    kwargs = {"model_name": args.model_name} if args.model_name else {}
+    recognizer = Wav2Vec2PhonemeRecognizer(**kwargs)
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    newly, skipped = run_stage1(utterances, args.wave_root, recognizer, args.out)
+    already = len(utterances) - newly - len(skipped)
+    print(f"recognized {newly} new utterances ({already} already done, {len(skipped)} skipped)")
+    if skipped:
+        skipped_path = args.out.parent / "recognize_skipped.txt"
+        skipped_path.write_text("\n".join(skipped) + "\n", encoding="utf-8")
+        print(f"see {skipped_path}", file=sys.stderr)
 
 
 def _cmd_score(args: argparse.Namespace) -> None:
-    raw = json.loads(args.scores_json.read_text(encoding="utf-8"))
-    utterances = parse_scores(raw)
-    if args.utt_ids is not None:
-        wanted = set(args.utt_ids.read_text(encoding="utf-8").split())
-        utterances = [u for u in utterances if u.utt_id in wanted]
+    utterances = _load_utterances(args.scores_json, args.utt2spk, args.utt_ids)
 
     hyp_by_utt = load_hyp_phonemes(args.hyp_jsonl)
     result, judgements, skipped = run_stage2(utterances, hyp_by_utt, args.threshold)
@@ -250,16 +316,28 @@ def main() -> None:
 
     p_sample = sub.add_parser("sample", help="pick a reproducible utterance subset")
     p_sample.add_argument("--scores-json", type=Path, required=True)
+    p_sample.add_argument(
+        "--utt2spk", type=Path, nargs="+", required=True,
+        help="one or more Kaldi utt2spk files (e.g. train/utt2spk test/utt2spk)",
+    )
+    p_sample.add_argument("--utt-ids", type=Path, default=None, help="restrict pool to these utt ids")
     p_sample.add_argument("--n", type=int, default=300)
     p_sample.add_argument("--seed", type=int, default=0)
     p_sample.add_argument("--out", type=Path, required=True)
     p_sample.set_defaults(func=_cmd_sample)
 
-    p_recognize = sub.add_parser("recognize", help="stage1: phoneme recognition (not yet implemented)")
+    p_recognize = sub.add_parser("recognize", help="stage1: phoneme recognition (resumable JSONL)")
+    p_recognize.add_argument("--scores-json", type=Path, required=True)
+    p_recognize.add_argument("--utt2spk", type=Path, nargs="+", required=True)
+    p_recognize.add_argument("--utt-ids", type=Path, default=None, help="restrict to these utt ids")
+    p_recognize.add_argument("--wave-root", type=Path, required=True, help="speechocean762 WAVE/ dir")
+    p_recognize.add_argument("--out", type=Path, required=True, help="resumable hyp_phonemes.jsonl path")
+    p_recognize.add_argument("--model-name", default=None, help="override the wav2vec2 model name")
     p_recognize.set_defaults(func=_cmd_recognize)
 
     p_score = sub.add_parser("score", help="stage2: score stage1 output against ground truth")
     p_score.add_argument("--scores-json", type=Path, required=True)
+    p_score.add_argument("--utt2spk", type=Path, nargs="+", required=True)
     p_score.add_argument("--hyp-jsonl", type=Path, required=True)
     p_score.add_argument("--utt-ids", type=Path, default=None, help="restrict to these utt ids")
     p_score.add_argument("--out-dir", type=Path, required=True)

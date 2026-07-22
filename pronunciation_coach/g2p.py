@@ -82,17 +82,42 @@ def _words_from_text(text: str) -> list[str]:
     return [w for w in words if w]
 
 
+def _phonemize_words_individually(words: list[str]) -> list[list[str]]:
+    """Phonemize each word as its own call, guaranteeing one group per word.
+
+    Fallback for when a single batched phonemize call merges words together:
+    espeak-ng sometimes drops the '|' word separator for short function-word
+    sequences ("did not" / "there was" / "not a farmer" -> one merged group
+    instead of two; measured on ~17% of speechocean762 utterances, confirmed
+    against the real corpus 2026-07-22 -- see docs/devlog.md). Phonemizing
+    one word at a time forces a boundary between every pair.
+    """
+    raw = _phonemize_raw(words)
+    groups: list[list[str]] = []
+    for word, phonemized in zip(words, raw):
+        word_groups = _parse_phoneme_groups(phonemized)
+        if len(word_groups) != 1:
+            raise ValueError(
+                f"Cannot phonemize word {word!r} as a single unit: got "
+                f"{len(word_groups)} phoneme groups instead of 1, even after "
+                "falling back to individual per-word phonemization. Numbers "
+                "or abbreviations may expand to multiple words; spell them "
+                "out in the target text."
+            )
+        groups.append(word_groups[0])
+    return groups
+
+
 def _pair_words_with_groups(
     text: str, phoneme_groups: list[list[str]]
 ) -> list[tuple[str, list[str]]]:
+    """Pair words with phoneme groups, falling back to per-word phonemization
+    on a count mismatch (see _phonemize_words_individually). Raises
+    ValueError only when that fallback also can't produce one group per word.
+    """
     words = _words_from_text(text)
     if len(words) != len(phoneme_groups):
-        raise ValueError(
-            f"Word count mismatch between text ({len(words)} words) and "
-            f"phonemizer output ({len(phoneme_groups)} groups) for {text!r}. "
-            "Numbers or abbreviations may expand to multiple words; "
-            "spell them out in the target text."
-        )
+        phoneme_groups = _phonemize_words_individually(words)
     return list(zip(words, phoneme_groups))
 
 

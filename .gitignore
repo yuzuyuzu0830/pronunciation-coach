@@ -38,6 +38,11 @@ htmlcov/
 
 # Project data / model weights
 data/
+!data/README.md
+
+# Generated evaluation artifacts (docs/design_eval.md §4); the polished
+# report is copied into docs/experiments/ (tracked) after each run.
+results/
 *.pt
 *.pth
 *.ckpt

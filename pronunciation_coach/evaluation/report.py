@@ -29,9 +29,10 @@ def render_report(result: MetricsResult, run_metadata: dict) -> str:
         "",
         f"- FAR (miss rate): {result.far:.3f}  [FA={c.false_accept}, TR={c.true_reject}]",
         f"- FRR (false alarm rate): {result.frr:.3f}  [FR={c.false_reject}, TA={c.true_accept}]",
-        f"- DER (diagnostic error rate): {result.der:.3f}  [mismatched={dc.mismatched}, eligible={dc.eligible}]",
+        f"- DER (diagnostic error rate): {result.der:.3f}  [mismatched={dc.mismatched}, "
+        f"eligible={dc.eligible}] -- out of scope for this corpus, see note below",
         "",
-        "### Note on the DER definition",
+        "### DER is out of scope for this corpus",
         "",
         DER_ADAPTATION_NOTE,
         "",
