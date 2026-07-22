@@ -1,6 +1,13 @@
 import pytest
 
-from pronunciation_coach.g2p import normalize, to_phonemes, to_phonemes_by_word
+from pronunciation_coach.g2p import (
+    normalize,
+    reset_espeak_backend_for_tests,
+    to_phonemes,
+    to_phonemes_by_word,
+    to_phonemes_by_word_many,
+)
+import pronunciation_coach.g2p as g2p_module
 
 try:
     from phonemizer.backend import EspeakBackend
@@ -110,3 +117,45 @@ def test_to_phonemes_composes_with_normalize():
     phonemes = to_phonemes("water")
     assert normalize(phonemes) == phonemes
     assert "ɔː" in phonemes
+
+
+@requires_espeak
+def test_espeak_backend_is_reused_across_calls(monkeypatch):
+    """phonemizer docs: avoid re-initializing espeak on every phonemize call."""
+    reset_espeak_backend_for_tests()
+    created = {"n": 0}
+    real_backend = g2p_module.EspeakBackend
+
+    class TrackingBackend(real_backend):
+        def __init__(self, *args, **kwargs):
+            created["n"] += 1
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(g2p_module, "EspeakBackend", TrackingBackend)
+
+    to_phonemes("high")
+    to_phonemes("water")
+    to_phonemes_by_word("this is high")
+    assert created["n"] == 1
+
+
+@requires_espeak
+def test_to_phonemes_by_word_many_matches_single_calls():
+    texts = ["this is high", "water"]
+    batched = to_phonemes_by_word_many(texts)
+    assert batched == [to_phonemes_by_word(t) for t in texts]
+
+
+@requires_espeak
+def test_to_phonemes_by_word_many_returns_value_error_per_bad_text(monkeypatch):
+    """One word-count mismatch must not prevent pairing the other texts."""
+
+    def fake_raw(texts: list[str]):
+        # First text: one phoneme group for two words -> mismatch.
+        # Second text: normal single-word output.
+        return ["w ɔː ɾ ɚ", "w ɔː ɾ ɚ"]
+
+    monkeypatch.setattr(g2p_module, "_phonemize_raw", fake_raw)
+    results = to_phonemes_by_word_many(["this water", "water"])
+    assert isinstance(results[0], ValueError)
+    assert results[1] == [("water", ["w", "ɔː", "ɾ", "ɚ"])]

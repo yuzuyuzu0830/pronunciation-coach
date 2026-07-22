@@ -170,32 +170,48 @@ def test_cmd_score_reports_skipped_utterances_missing_from_hyp_jsonl(tmp_path):
     [
         RuntimeError("espeak backend failed"),
         OSError("libespeak not found"),
-        ValueError("word count mismatch"),
     ],
 )
-def test_run_stage2_skips_utterance_when_g2p_raises(monkeypatch, exc):
-    """phonemizer/espeak can raise beyond ValueError; one bad utt must not
-    abort the whole stage2 batch (docs/design_eval.md stage2 skip design)."""
+def test_run_stage2_skips_all_when_batched_g2p_raises(monkeypatch, exc):
+    """Backend-level failure on the batched phonemize skips every pending utt."""
     utterances = evaluate_detection.parse_scores(SCORES)
-    calls = {"n": 0}
 
-    def boom(_text: str):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise exc
-        # Second utterance succeeds without calling real espeak.
-        return [("water", ["w", "ɔː", "ɾ", "ɚ"])]
+    def boom(_texts: list[str]):
+        raise exc
 
-    monkeypatch.setattr(evaluate_detection, "build_reference_word_spans", boom)
+    monkeypatch.setattr(evaluate_detection, "to_phonemes_by_word_many", boom)
+
+    result, judgements, skipped = evaluate_detection.run_stage2(
+        utterances, HYP_PHONEMES, threshold=0.5
+    )
+
+    assert result.insertion_stats.utterance_count == 0
+    assert judgements == []
+    assert len(skipped) == 2
+    assert all("g2p_failed" in s for s in skipped)
+
+
+def test_run_stage2_skips_utterance_on_per_text_word_count_mismatch(monkeypatch):
+    """Word/group mismatches stay per-utterance after the batched phonemize."""
+    utterances = evaluate_detection.parse_scores(SCORES)
+
+    def fake_many(texts: list[str]):
+        assert len(texts) == 2
+        return [
+            ValueError("word count mismatch"),
+            [("water", ["w", "ɔː", "ɾ", "ɚ"])],
+        ]
+
+    monkeypatch.setattr(evaluate_detection, "to_phonemes_by_word_many", fake_many)
 
     result, judgements, skipped = evaluate_detection.run_stage2(
         utterances, HYP_PHONEMES, threshold=0.5
     )
 
     assert len(skipped) == 1
-    assert skipped[0].startswith("0001010011: g2p_")
+    assert skipped[0].startswith("0001010011: g2p_word_count_mismatch")
     assert result.insertion_stats.utterance_count == 1
-    assert judgements  # second utterance still scored
+    assert judgements
 
 
 def test_cmd_score_exits_when_every_utterance_g2p_fails(tmp_path, monkeypatch):
@@ -212,10 +228,10 @@ def test_cmd_score_exits_when_every_utterance_g2p_fails(tmp_path, monkeypatch):
     )
     out_dir = tmp_path / "results"
 
-    def boom(_text: str):
+    def boom(_texts: list[str]):
         raise RuntimeError("espeak unavailable")
 
-    monkeypatch.setattr(evaluate_detection, "build_reference_word_spans", boom)
+    monkeypatch.setattr(evaluate_detection, "to_phonemes_by_word_many", boom)
 
     args = evaluate_detection.argparse.Namespace(
         scores_json=scores_path,

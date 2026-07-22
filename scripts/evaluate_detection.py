@@ -34,7 +34,11 @@ from pronunciation_coach.evaluation.so762 import (
     parse_scores,
     stratified_sample,
 )
-from pronunciation_coach.g2p import normalize, to_phonemes_by_word
+from pronunciation_coach.g2p import (
+    normalize,
+    to_phonemes_by_word,
+    to_phonemes_by_word_many,
+)
 from pronunciation_coach.pipeline import extract_errors
 
 
@@ -78,20 +82,30 @@ class UtteranceScoreOutcome:
 
 
 def score_utterance(
-    utt: UtteranceAnnotation, hyp_phonemes: list[str], threshold: float
+    utt: UtteranceAnnotation,
+    hyp_phonemes: list[str],
+    threshold: float,
+    reference_word_spans: list[tuple[str, list[str]]] | None = None,
 ) -> UtteranceScoreOutcome:
     """Run the detection pipeline's alignment logic (not the full Pipeline --
-    no transcriber/explainer needed) and match it against ground truth."""
-    try:
-        reference_word_spans = build_reference_word_spans(utt.text)
-    except ValueError as e:
-        # Word/group count mismatch from to_phonemes_by_word, or ValueError
-        # raised inside phonemizer itself.
-        return UtteranceScoreOutcome(utt.utt_id, [], [], f"g2p_word_count_mismatch: {e}")
-    except (RuntimeError, OSError) as e:
-        # phonemizer/espeak-ng commonly surfaces backend failures this way;
-        # skip the utterance rather than aborting the whole stage2 batch.
-        return UtteranceScoreOutcome(utt.utt_id, [], [], f"g2p_failed: {e}")
+    no transcriber/explainer needed) and match it against ground truth.
+
+    Prefer passing precomputed ``reference_word_spans`` from a batched g2p
+    call (see run_stage2); the per-utterance path is kept for single-utt use.
+    """
+    if reference_word_spans is None:
+        try:
+            reference_word_spans = build_reference_word_spans(utt.text)
+        except ValueError as e:
+            # Word/group count mismatch from to_phonemes_by_word, or ValueError
+            # raised inside phonemizer itself.
+            return UtteranceScoreOutcome(
+                utt.utt_id, [], [], f"g2p_word_count_mismatch: {e}"
+            )
+        except (RuntimeError, OSError) as e:
+            # phonemizer/espeak-ng commonly surfaces backend failures this way;
+            # skip the utterance rather than aborting the whole stage2 batch.
+            return UtteranceScoreOutcome(utt.utt_id, [], [], f"g2p_failed: {e}")
 
     reference = [p for _, phones in reference_word_spans for p in phones]
     hypothesis = normalize(hyp_phonemes)
@@ -116,11 +130,33 @@ def run_stage2(
     all_insertions: list[InsertionRecord] = []
     skipped: list[str] = []
     scored_count = 0
+
+    pending: list[UtteranceAnnotation] = []
     for utt in utterances:
         if utt.utt_id not in hyp_by_utt:
             skipped.append(f"{utt.utt_id}: missing_from_hyp_jsonl")
             continue
-        outcome = score_utterance(utt, hyp_by_utt[utt.utt_id], threshold)
+        pending.append(utt)
+
+    # One espeak backend + one phonemize(list) for all texts (phonemizer docs
+    # discourage per-line calls that re-init the backend each time).
+    g2p_results: list[list[tuple[str, list[str]]] | ValueError] | None
+    try:
+        g2p_results = to_phonemes_by_word_many([utt.text.lower() for utt in pending])
+    except (RuntimeError, OSError) as e:
+        for utt in pending:
+            skipped.append(f"{utt.utt_id}: g2p_failed: {e}")
+        result = compute_metrics([], [], 0)
+        return result, [], skipped
+
+    for utt, g2p_result in zip(pending, g2p_results):
+        if isinstance(g2p_result, ValueError):
+            skipped.append(f"{utt.utt_id}: g2p_word_count_mismatch: {g2p_result}")
+            continue
+        spans = [(word, normalize(phones)) for word, phones in g2p_result]
+        outcome = score_utterance(
+            utt, hyp_by_utt[utt.utt_id], threshold, reference_word_spans=spans
+        )
         if outcome.skipped_reason is not None:
             skipped.append(f"{outcome.utt_id}: {outcome.skipped_reason}")
             continue

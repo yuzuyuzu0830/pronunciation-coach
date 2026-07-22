@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import string
 
-from phonemizer import phonemize
+from phonemizer.backend import EspeakBackend
 from phonemizer.separator import Separator
 
 STRESS_MARKS = frozenset("ˈˌ")
@@ -34,6 +34,23 @@ EQUIVALENCE_CLASSES = {
 # "h aɪ", "church" -> "tʃ ɜː tʃ"), matching wav2vec2-espeak's token unit.
 _SEPARATOR = Separator(phone=" ", word="|")
 
+# phonemizer initializes espeak on every phonemize() call; reuse one backend
+# (and prefer list inputs) as the library docs recommend.
+_espeak_backend: EspeakBackend | None = None
+
+
+def _get_espeak_backend() -> EspeakBackend:
+    global _espeak_backend
+    if _espeak_backend is None:
+        _espeak_backend = EspeakBackend(language="en-us")
+    return _espeak_backend
+
+
+def reset_espeak_backend_for_tests() -> None:
+    """Drop the cached backend so tests can assert (re)initialization."""
+    global _espeak_backend
+    _espeak_backend = None
+
 
 def normalize(phonemes: list[str]) -> list[str]:
     """Strip stress marks and map equivalence-class variants to canonical form.
@@ -47,26 +64,28 @@ def normalize(phonemes: list[str]) -> list[str]:
     return [EQUIVALENCE_CLASSES.get(p, p) for p in stripped if p]
 
 
-def _phonemize_words(text: str) -> list[list[str]]:
-    result = phonemize(
-        text,
-        language="en-us",
-        backend="espeak",
-        strip=True,
-        separator=_SEPARATOR,
+def _phonemize_raw(texts: list[str]) -> list[str]:
+    """Phonemize many texts with a single espeak backend instance."""
+    if not texts:
+        return []
+    return _get_espeak_backend().phonemize(
+        texts, separator=_SEPARATOR, strip=True
     )
-    return [group.split() for group in result.split("|") if group.strip()]
 
 
-def to_phonemes(text: str) -> list[str]:
-    return [phone for word in _phonemize_words(text) for phone in word]
+def _parse_phoneme_groups(phonemized: str) -> list[list[str]]:
+    return [group.split() for group in phonemized.split("|") if group.strip()]
 
 
-def to_phonemes_by_word(text: str) -> list[tuple[str, list[str]]]:
-    """Phonemize text keeping word boundaries for error-to-word attribution."""
+def _words_from_text(text: str) -> list[str]:
     words = [w.strip(string.punctuation) for w in text.split()]
-    words = [w for w in words if w]
-    phoneme_groups = _phonemize_words(text)
+    return [w for w in words if w]
+
+
+def _pair_words_with_groups(
+    text: str, phoneme_groups: list[list[str]]
+) -> list[tuple[str, list[str]]]:
+    words = _words_from_text(text)
     if len(words) != len(phoneme_groups):
         raise ValueError(
             f"Word count mismatch between text ({len(words)} words) and "
@@ -75,3 +94,37 @@ def to_phonemes_by_word(text: str) -> list[tuple[str, list[str]]]:
             "spell them out in the target text."
         )
     return list(zip(words, phoneme_groups))
+
+
+def _phonemize_words(text: str) -> list[list[str]]:
+    return _parse_phoneme_groups(_phonemize_raw([text])[0])
+
+
+def to_phonemes(text: str) -> list[str]:
+    return [phone for word in _phonemize_words(text) for phone in word]
+
+
+def to_phonemes_by_word(text: str) -> list[tuple[str, list[str]]]:
+    """Phonemize text keeping word boundaries for error-to-word attribution."""
+    return _pair_words_with_groups(text, _phonemize_words(text))
+
+
+def to_phonemes_by_word_many(
+    texts: list[str],
+) -> list[list[tuple[str, list[str]]] | ValueError]:
+    """Batch-phonemize texts (one espeak init), pairing each with its words.
+
+    Backend failures (RuntimeError/OSError) propagate. Per-text word/group
+    count mismatches are returned as ValueError entries so callers can skip
+    one utterance without aborting the rest.
+    """
+    raw = _phonemize_raw(texts)
+    results: list[list[tuple[str, list[str]]] | ValueError] = []
+    for text, phonemized in zip(texts, raw):
+        try:
+            results.append(
+                _pair_words_with_groups(text, _parse_phoneme_groups(phonemized))
+            )
+        except ValueError as e:
+            results.append(e)
+    return results
