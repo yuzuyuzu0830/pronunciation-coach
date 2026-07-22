@@ -175,6 +175,14 @@ def render_facts_only_section(errors: list[PhonemeError]) -> str:
     return "\n".join(lines)
 
 
+def _require_non_negative_limit(full_explanation_limit: int) -> None:
+    """Reject negatives: Python would treat them as reverse slice indices."""
+    if full_explanation_limit < 0:
+        raise ValueError(
+            f"full_explanation_limit must be >= 0, got {full_explanation_limit}"
+        )
+
+
 def _split_full_and_facts_only(
     pronunciation_errors: list[PhonemeError],
     reference_phonemes: list[str],
@@ -189,6 +197,7 @@ def _split_full_and_facts_only(
     all matched errors before unmatched ones, so the first min(limit,
     matched) pairs are exactly the full-explanation set.
     """
+    _require_non_negative_limit(full_explanation_limit)
     ranked = rank_errors_by_tier(pronunciation_errors, reference_phonemes, l1)
     matched = sum(1 for _, record in ranked if record is not None)
     full_count = min(full_explanation_limit, matched)
@@ -270,6 +279,7 @@ def build_prompt(
     version: str = DEFAULT_PROMPT_VERSION,
     full_explanation_limit: int = 3,
 ) -> str:
+    _require_non_negative_limit(full_explanation_limit)
     if version not in _ROLE_INSTRUCTIONS:
         raise ValueError(
             f"Unknown prompt version {version!r}; available: {PROMPT_VERSIONS}"
@@ -351,6 +361,7 @@ class OllamaExplainer:
                 f"Unknown prompt version {prompt_version!r}; "
                 f"available: {PROMPT_VERSIONS}"
             )
+        _require_non_negative_limit(full_explanation_limit)
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout

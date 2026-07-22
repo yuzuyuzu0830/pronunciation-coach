@@ -137,6 +137,21 @@ def test_unknown_prompt_version_raises_value_error():
         build_prompt(make_report(SAMPLE_ERRORS), version="v99")
 
 
+def test_negative_full_explanation_limit_raises_in_build_prompt():
+    """Negatives become reverse slice indices in ranked[:limit]; reject early."""
+    with pytest.raises(ValueError, match="full_explanation_limit must be >= 0"):
+        build_prompt(
+            make_report(SAMPLE_ERRORS),
+            version="v3",
+            full_explanation_limit=-1,
+        )
+
+
+def test_negative_full_explanation_limit_raises_in_explainer_init():
+    with pytest.raises(ValueError, match="full_explanation_limit must be >= 0"):
+        OllamaExplainer(full_explanation_limit=-1)
+
+
 def test_v2_forbids_writing_new_symbols():
     prompt = build_prompt(make_report(SAMPLE_ERRORS), version="v2")
     assert "Do not write any new phonetic or IPA symbols" in prompt
