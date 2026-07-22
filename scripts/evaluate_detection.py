@@ -85,7 +85,13 @@ def score_utterance(
     try:
         reference_word_spans = build_reference_word_spans(utt.text)
     except ValueError as e:
+        # Word/group count mismatch from to_phonemes_by_word, or ValueError
+        # raised inside phonemizer itself.
         return UtteranceScoreOutcome(utt.utt_id, [], [], f"g2p_word_count_mismatch: {e}")
+    except (RuntimeError, OSError) as e:
+        # phonemizer/espeak-ng commonly surfaces backend failures this way;
+        # skip the utterance rather than aborting the whole stage2 batch.
+        return UtteranceScoreOutcome(utt.utt_id, [], [], f"g2p_failed: {e}")
 
     reference = [p for _, phones in reference_word_spans for p in phones]
     hypothesis = normalize(hyp_phonemes)
@@ -150,6 +156,21 @@ def _cmd_score(args: argparse.Namespace) -> None:
 
     hyp_by_utt = load_hyp_phonemes(args.hyp_jsonl)
     result, judgements, skipped = run_stage2(utterances, hyp_by_utt, args.threshold)
+
+    if utterances and result.insertion_stats.utterance_count == 0:
+        # e.g. espeak missing: every utt skipped as g2p_failed. Refuse to
+        # write empty FAR/FRR that look like a successful run.
+        msg = (
+            f"stage2 scored 0 utterances ({len(skipped)} skipped); "
+            "refusing empty metrics"
+        )
+        print(msg, file=sys.stderr)
+        if skipped:
+            skipped_path = args.out_dir / "skipped.txt"
+            args.out_dir.mkdir(parents=True, exist_ok=True)
+            skipped_path.write_text("\n".join(skipped) + "\n", encoding="utf-8")
+            print(f"see {skipped_path}", file=sys.stderr)
+        raise SystemExit(msg)
 
     run_metadata = {
         "run_id": args.run_id,

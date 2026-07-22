@@ -163,3 +163,70 @@ def test_cmd_score_reports_skipped_utterances_missing_from_hyp_jsonl(tmp_path):
 
     skipped = (out_dir / "skipped.txt").read_text(encoding="utf-8")
     assert "0001010011" in skipped
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        RuntimeError("espeak backend failed"),
+        OSError("libespeak not found"),
+        ValueError("word count mismatch"),
+    ],
+)
+def test_run_stage2_skips_utterance_when_g2p_raises(monkeypatch, exc):
+    """phonemizer/espeak can raise beyond ValueError; one bad utt must not
+    abort the whole stage2 batch (docs/design_eval.md stage2 skip design)."""
+    utterances = evaluate_detection.parse_scores(SCORES)
+    calls = {"n": 0}
+
+    def boom(_text: str):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise exc
+        # Second utterance succeeds without calling real espeak.
+        return [("water", ["w", "ɔː", "ɾ", "ɚ"])]
+
+    monkeypatch.setattr(evaluate_detection, "build_reference_word_spans", boom)
+
+    result, judgements, skipped = evaluate_detection.run_stage2(
+        utterances, HYP_PHONEMES, threshold=0.5
+    )
+
+    assert len(skipped) == 1
+    assert skipped[0].startswith("0001010011: g2p_")
+    assert result.insertion_stats.utterance_count == 1
+    assert judgements  # second utterance still scored
+
+
+def test_cmd_score_exits_when_every_utterance_g2p_fails(tmp_path, monkeypatch):
+    """All-skip (e.g. espeak missing) must not look like a successful empty run."""
+    scores_path = tmp_path / "scores.json"
+    scores_path.write_text(json.dumps(SCORES), encoding="utf-8")
+    hyp_path = tmp_path / "hyp_phonemes.jsonl"
+    hyp_path.write_text(
+        "\n".join(
+            json.dumps({"utt_id": utt_id, "phonemes": phones})
+            for utt_id, phones in HYP_PHONEMES.items()
+        ),
+        encoding="utf-8",
+    )
+    out_dir = tmp_path / "results"
+
+    def boom(_text: str):
+        raise RuntimeError("espeak unavailable")
+
+    monkeypatch.setattr(evaluate_detection, "build_reference_word_spans", boom)
+
+    args = evaluate_detection.argparse.Namespace(
+        scores_json=scores_path,
+        hyp_jsonl=hyp_path,
+        utt_ids=None,
+        out_dir=out_dir,
+        threshold=0.5,
+        seed=0,
+        run_id="empty",
+        subset_description="fixture",
+        model_name="fixture-model",
+    )
+    with pytest.raises(SystemExit, match="scored 0 utterances"):
+        evaluate_detection._cmd_score(args)
