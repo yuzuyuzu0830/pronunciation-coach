@@ -1,0 +1,38 @@
+{
+  "0001010011": {
+    "text": "THIS IS HIGH",
+    "words": [
+      {
+        "text": "THIS",
+        "phones": ["DH", "IH1", "S"],
+        "phones-accuracy": [2.0, 2.0, 2.0],
+        "mispronunciations": []
+      },
+      {
+        "text": "IS",
+        "phones": ["IH1", "Z"],
+        "phones-accuracy": [2.0, 2.0],
+        "mispronunciations": []
+      },
+      {
+        "text": "HIGH",
+        "phones": ["HH", "AY1"],
+        "phones-accuracy": [0.0, 2.0],
+        "mispronunciations": [
+          {"canonical-phone": "HH", "index": 0, "pronounced-phone": "<unk>"}
+        ]
+      }
+    ]
+  },
+  "0002030022": {
+    "text": "WATER",
+    "words": [
+      {
+        "text": "WATER",
+        "phones": ["W", "AO1", "T", "ER0"],
+        "phones-accuracy": [2.0, 2.0, 1.8, 2.0],
+        "mispronunciations": []
+      }
+    ]
+  }
+}
