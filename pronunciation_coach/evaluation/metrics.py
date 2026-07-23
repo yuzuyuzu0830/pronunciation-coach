@@ -302,9 +302,9 @@ def compute_metrics(
     judgements: list[PhonemeJudgement],
     insertions: list[InsertionRecord],
     utterance_count: int,
-    top_n_false_rejects: int = 20,
-    top_n_true_rejects: int = 20,
+    top_n: int = 20,
 ) -> MetricsResult:
+    """Aggregate FAR/FRR/DER plus top-N FR/TR pair tables (same N for both)."""
     confusion = compute_confusion(judgements)
     der_value, der_counts = compute_der(judgements)
     return MetricsResult(
@@ -314,8 +314,8 @@ def compute_metrics(
         der=der_value,
         der_counts=der_counts,
         insertion_stats=summarize_insertions(insertions, utterance_count),
-        top_false_rejects=top_false_reject_pairs(judgements, top_n_false_rejects),
-        top_true_rejects=top_true_reject_pairs(judgements, top_n_true_rejects),
+        top_false_rejects=top_false_reject_pairs(judgements, top_n),
+        top_true_rejects=top_true_reject_pairs(judgements, top_n),
     )
 
 

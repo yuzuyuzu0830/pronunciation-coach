@@ -399,3 +399,17 @@ def test_compute_metrics_and_to_json_dict_shape():
     assert "insertion_stats" in payload
     assert payload["top_false_rejects"] == []  # neither judgement here is a false reject
     assert len(payload["top_true_rejects"]) == 1  # the mispronounced=True, flagged=True one
+
+
+def test_compute_metrics_top_n_limits_both_pair_tables():
+    judgements = [
+        judgement(mispronounced=False, flagged=True, reference_phone="a", actual="x"),
+        judgement(mispronounced=False, flagged=True, reference_phone="b", actual="y"),
+        judgement(mispronounced=False, flagged=True, reference_phone="c", actual="z"),
+        judgement(mispronounced=True, flagged=True, reference_phone="d", actual="p"),
+        judgement(mispronounced=True, flagged=True, reference_phone="e", actual="q"),
+        judgement(mispronounced=True, flagged=True, reference_phone="f", actual="r"),
+    ]
+    result = compute_metrics(judgements, insertions=[], utterance_count=1, top_n=2)
+    assert len(result.top_false_rejects) == 2
+    assert len(result.top_true_rejects) == 2
