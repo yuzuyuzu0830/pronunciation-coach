@@ -6,7 +6,12 @@ from pathlib import Path
 
 import torch
 import torchaudio
-from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
+from transformers import (
+    Wav2Vec2FeatureExtractor,
+    Wav2Vec2ForCTC,
+    Wav2Vec2PhonemeCTCTokenizer,
+    Wav2Vec2Processor,
+)
 
 DEFAULT_MODEL_NAME = "facebook/wav2vec2-lv-60-espeak-cv-ft"
 # wav2vec2 expects 16 kHz mono input.
@@ -31,6 +36,20 @@ def _load_audio(audio_path: Path) -> torch.Tensor:
     return waveform.squeeze(0)
 
 
+def _load_processor(model_name: str) -> Wav2Vec2Processor:
+    """Build the processor from an explicit tokenizer + feature extractor.
+
+    Wav2Vec2Processor.from_pretrained(model_name) can fail to auto-resolve
+    the phoneme tokenizer class for some espeak-phoneme CTC repos (a known
+    issue observed when comparing candidate models); constructing each part
+    explicitly and composing them sidesteps that regardless of which repo
+    triggers it.
+    """
+    tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(model_name)
+    feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
+    return Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
+
+
 class Wav2Vec2PhonemeRecognizer:
     """PhonemeRecognizer implementation backed by a wav2vec2 CTC model.
 
@@ -45,7 +64,7 @@ class Wav2Vec2PhonemeRecognizer:
         device: torch.device | None = None,
     ) -> None:
         self._device = device if device is not None else default_device()
-        self._processor = Wav2Vec2Processor.from_pretrained(model_name)
+        self._processor = _load_processor(model_name)
         self._model = Wav2Vec2ForCTC.from_pretrained(model_name).to(self._device).eval()
 
     def recognize(self, audio_path: Path) -> list[str]:
