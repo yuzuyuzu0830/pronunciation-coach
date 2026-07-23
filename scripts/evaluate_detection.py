@@ -128,7 +128,7 @@ def run_stage2(
     utterances: list[UtteranceAnnotation],
     hyp_by_utt: dict[str, list[str]],
     threshold: float,
-) -> tuple[MetricsResult, list[PhonemeJudgement], list[str]]:
+) -> tuple[MetricsResult, list[PhonemeJudgement], list[InsertionRecord], list[str]]:
     all_judgements: list[PhonemeJudgement] = []
     all_insertions: list[InsertionRecord] = []
     skipped: list[str] = []
@@ -150,7 +150,7 @@ def run_stage2(
         for utt in pending:
             skipped.append(f"{utt.utt_id}: g2p_failed: {e}")
         result = compute_metrics([], [], 0)
-        return result, [], skipped
+        return result, [], [], skipped
 
     for utt, g2p_result in zip(pending, g2p_results):
         if isinstance(g2p_result, ValueError):
@@ -167,7 +167,7 @@ def run_stage2(
         all_insertions.extend(outcome.insertions)
         scored_count += 1
     result = compute_metrics(all_judgements, all_insertions, scored_count)
-    return result, all_judgements, skipped
+    return result, all_judgements, all_insertions, skipped
 
 
 def run_stage1(
@@ -231,14 +231,15 @@ def _load_utterances(
 
 def age_group_breakdown(
     utterances: list[UtteranceAnnotation],
-    hyp_by_utt: dict[str, list[str]],
-    threshold: float,
+    judgements: list[PhonemeJudgement],
+    insertions: list[InsertionRecord],
+    skipped: list[str],
     spk2age_paths: list[Path],
 ) -> dict:
     """Score child/adult subsets separately (docs/design_eval.md §1.3 DEI note).
 
-    Reuses run_stage2 on each speaker-age partition of `utterances`, against
-    the same already-recognized hyp_by_utt -- no stage1 rerun needed.
+    Filters judgements/insertions already produced by run_stage2; does not
+    re-run g2p, alignment, or judgement building.
     """
     age_by_speaker = _load_two_column_mapping(spk2age_paths, parse_spk2age)
     groups: dict[str, list[UtteranceAnnotation]] = {"child": [], "adult": []}
@@ -250,13 +251,18 @@ def age_group_breakdown(
             continue
         groups["child" if is_child(age) else "adult"].append(utt)
 
+    skipped_ids = {entry.split(":", 1)[0] for entry in skipped}
     breakdown: dict = {}
     for group_name, group_utterances in groups.items():
-        result, _, skipped = run_stage2(group_utterances, hyp_by_utt, threshold)
+        group_ids = {u.utt_id for u in group_utterances}
+        group_judgements = [j for j in judgements if j.utt_id in group_ids]
+        group_insertions = [i for i in insertions if i.utt_id in group_ids]
+        scored_ids = group_ids - skipped_ids
+        result = compute_metrics(group_judgements, group_insertions, len(scored_ids))
         breakdown[group_name] = {
             "n_utterances": len(group_utterances),
-            "n_scored": result.insertion_stats.utterance_count,
-            "n_skipped": len(skipped),
+            "n_scored": len(scored_ids),
+            "n_skipped": len(group_ids & skipped_ids),
             "far": result.far,
             "frr": result.frr,
             "confusion": asdict(result.confusion),
@@ -301,7 +307,9 @@ def _cmd_score(args: argparse.Namespace) -> None:
     utterances = _load_utterances(args.scores_json, args.utt2spk, args.utt_ids)
 
     hyp_by_utt = load_hyp_phonemes(args.hyp_jsonl)
-    result, judgements, skipped = run_stage2(utterances, hyp_by_utt, args.threshold)
+    result, judgements, insertions, skipped = run_stage2(
+        utterances, hyp_by_utt, args.threshold
+    )
 
     if utterances and result.insertion_stats.utterance_count == 0:
         # e.g. espeak missing: every utt skipped as g2p_failed. Refuse to
@@ -339,7 +347,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
     metrics_payload = to_json_dict(result, run_metadata)
     if args.spk2age:
         metrics_payload["age_breakdown"] = age_group_breakdown(
-            utterances, hyp_by_utt, args.threshold, args.spk2age
+            utterances, judgements, insertions, skipped, args.spk2age
         )
 
     metrics_path = args.out_dir / "metrics.json"

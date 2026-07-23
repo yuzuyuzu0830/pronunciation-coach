@@ -102,7 +102,9 @@ def _write_utt2spk(tmp_path: Path) -> list[Path]:
 @requires_espeak
 def test_run_stage2_computes_expected_metrics():
     utterances = evaluate_detection.parse_scores(SCORES, SPEAKER_BY_UTT)
-    result, judgements, skipped = evaluate_detection.run_stage2(utterances, HYP_PHONEMES, threshold=0.5)
+    result, judgements, insertions, skipped = evaluate_detection.run_stage2(
+        utterances, HYP_PHONEMES, threshold=0.5
+    )
 
     assert skipped == []
     assert result.insertion_stats.utterance_count == 2
@@ -114,6 +116,7 @@ def test_run_stage2_computes_expected_metrics():
     assert result.der == pytest.approx(0.0)
     assert result.der_counts.eligible == 1
     assert result.confusion.total == 11
+    assert isinstance(insertions, list)
 
     dh = next(j for j in judgements if j.gt_phone == "DH")
     assert dh.system_flagged and dh.system_actual == "d"
@@ -170,8 +173,15 @@ def test_cmd_score_writes_expected_output_files(tmp_path):
 def test_age_group_breakdown_splits_by_child_adult(tmp_path):
     """0001 (age 10, child) has "this is high"; 0002 (age 25, adult) has "water"."""
     utterances = evaluate_detection.parse_scores(SCORES, SPEAKER_BY_UTT)
+    _, judgements, insertions, skipped = evaluate_detection.run_stage2(
+        utterances, HYP_PHONEMES, threshold=0.5
+    )
     breakdown = evaluate_detection.age_group_breakdown(
-        utterances, HYP_PHONEMES, threshold=0.5, spk2age_paths=_write_spk2age(tmp_path)
+        utterances,
+        judgements,
+        insertions,
+        skipped,
+        spk2age_paths=_write_spk2age(tmp_path),
     )
     assert breakdown["child"]["n_utterances"] == 1  # speaker 0001 -> "this is high"
     assert breakdown["adult"]["n_utterances"] == 1  # speaker 0002 -> "water"
@@ -185,11 +195,71 @@ def test_age_group_breakdown_counts_unknown_age_speakers(tmp_path):
     spk2age_path = tmp_path / "spk2age"
     spk2age_path.write_text("0001 10\n", encoding="utf-8")  # 0002 deliberately omitted
     utterances = evaluate_detection.parse_scores(SCORES, SPEAKER_BY_UTT)
+    _, judgements, insertions, skipped = evaluate_detection.run_stage2(
+        utterances, HYP_PHONEMES, threshold=0.5
+    )
     breakdown = evaluate_detection.age_group_breakdown(
-        utterances, HYP_PHONEMES, threshold=0.5, spk2age_paths=[spk2age_path]
+        utterances, judgements, insertions, skipped, spk2age_paths=[spk2age_path]
     )
     assert breakdown["n_utterances_unknown_age"] == 1
     assert breakdown["adult"]["n_utterances"] == 0
+
+
+def test_age_group_breakdown_reuses_judgements_without_rerunning_stage2(tmp_path, monkeypatch):
+    """Age breakdown must filter existing judgements, not call run_stage2 again."""
+    utterances = evaluate_detection.parse_scores(SCORES, SPEAKER_BY_UTT)
+    judgements = [
+        evaluate_detection.PhonemeJudgement(
+            utt_id="0001010011",
+            word="THIS",
+            gt_phone="DH",
+            gt_accuracy=0.2,
+            ground_truth_mispronounced=True,
+            system_flagged=True,
+            system_op="substitution",
+            system_actual="d",
+            reference_phone="ð",
+            pronounced_phone="D",
+            excluded=False,
+            exclusion_reason=None,
+        ),
+        evaluate_detection.PhonemeJudgement(
+            utt_id="0002030022",
+            word="WATER",
+            gt_phone="W",
+            gt_accuracy=2.0,
+            ground_truth_mispronounced=False,
+            system_flagged=False,
+            system_op=None,
+            system_actual=None,
+            reference_phone="w",
+            pronounced_phone=None,
+            excluded=False,
+            exclusion_reason=None,
+        ),
+    ]
+
+    def fail_stage2(*_args, **_kwargs):
+        raise AssertionError("age_group_breakdown must not call run_stage2")
+
+    monkeypatch.setattr(evaluate_detection, "run_stage2", fail_stage2)
+    monkeypatch.setattr(
+        evaluate_detection,
+        "to_phonemes_by_word_many",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not call g2p")),
+    )
+
+    breakdown = evaluate_detection.age_group_breakdown(
+        utterances,
+        judgements,
+        insertions=[],
+        skipped=[],
+        spk2age_paths=_write_spk2age(tmp_path),
+    )
+    assert breakdown["child"]["n_scored"] == 1
+    assert breakdown["adult"]["n_scored"] == 1
+    assert breakdown["child"]["confusion"]["true_reject"] == 1
+    assert breakdown["adult"]["confusion"]["true_accept"] == 1
 
 
 @requires_espeak
@@ -273,12 +343,13 @@ def test_run_stage2_skips_all_when_batched_g2p_raises(monkeypatch, exc):
 
     monkeypatch.setattr(evaluate_detection, "to_phonemes_by_word_many", boom)
 
-    result, judgements, skipped = evaluate_detection.run_stage2(
+    result, judgements, insertions, skipped = evaluate_detection.run_stage2(
         utterances, HYP_PHONEMES, threshold=0.5
     )
 
     assert result.insertion_stats.utterance_count == 0
     assert judgements == []
+    assert insertions == []
     assert len(skipped) == 2
     assert all("g2p_failed" in s for s in skipped)
 
@@ -296,7 +367,7 @@ def test_run_stage2_skips_utterance_on_per_text_word_count_mismatch(monkeypatch)
 
     monkeypatch.setattr(evaluate_detection, "to_phonemes_by_word_many", fake_many)
 
-    result, judgements, skipped = evaluate_detection.run_stage2(
+    result, judgements, insertions, skipped = evaluate_detection.run_stage2(
         utterances, HYP_PHONEMES, threshold=0.5
     )
 
