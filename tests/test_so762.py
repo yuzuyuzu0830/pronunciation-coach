@@ -8,8 +8,10 @@ from pronunciation_coach.evaluation.so762 import (
     UtteranceAnnotation,
     WordAnnotation,
     audio_path,
+    is_child,
     is_mispronounced,
     parse_scores,
+    parse_spk2age,
     parse_utt2spk,
     stratified_sample,
 )
@@ -90,6 +92,28 @@ def test_parse_utt2spk_skips_blank_lines():
 def test_parse_utt2spk_raises_on_malformed_line():
     with pytest.raises(ValueError, match="Malformed"):
         parse_utt2spk("010610129\n")
+
+
+def test_parse_spk2age_parses_speaker_id_age_pairs():
+    assert parse_spk2age("0003 6\n0024 25\n") == {"0003": 6, "0024": 25}
+
+
+def test_parse_spk2age_raises_on_malformed_line():
+    with pytest.raises(ValueError, match="Malformed"):
+        parse_spk2age("0003\n")
+
+
+@pytest.mark.parametrize(
+    "age, expected",
+    [
+        (6, True),
+        (15, True),
+        (19, False),
+        (43, False),
+    ],
+)
+def test_is_child(age, expected):
+    assert is_child(age) is expected
 
 
 def test_audio_path_builds_speaker_directory_layout():

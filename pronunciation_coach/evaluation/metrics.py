@@ -8,6 +8,7 @@ the compute_* functions turn those judgements into the reported metrics.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import asdict, dataclass
 from typing import Literal
 
@@ -55,6 +56,7 @@ class PhonemeJudgement:
     system_flagged: bool  # True: system emitted a substitution/deletion here
     system_op: Literal["substitution", "deletion"] | None
     system_actual: str | None  # hyp phone (espeak), for DER; None for deletion/accept
+    reference_phone: str | None  # espeak reference phone this GT phone mapped to; None if excluded
     pronounced_phone: str | None  # ground truth's reported mispronunciation, if any
     excluded: bool  # True: excluded from FAR/FRR (position could not be mapped)
     exclusion_reason: str | None
@@ -117,6 +119,7 @@ def build_utterance_judgements(
                         system_flagged=False,
                         system_op=None,
                         system_actual=None,
+                        reference_phone=None,
                         pronounced_phone=pronounced_phone,
                         excluded=True,
                         exclusion_reason="unmapped_position",
@@ -136,6 +139,7 @@ def build_utterance_judgements(
                     system_flagged=flagged,
                     system_op=error.op if error else None,  # type: ignore[arg-type]
                     system_actual=error.actual if error else None,
+                    reference_phone=ref_phones[local_ref_pos],
                     pronounced_phone=pronounced_phone,
                     excluded=False,
                     exclusion_reason=None,
@@ -219,6 +223,55 @@ def compute_der(judgements: list[PhonemeJudgement]) -> tuple[float, DerCounts]:
 
 
 @dataclass(frozen=True)
+class PhonePairCount:
+    reference_phone: str  # espeak reference phone
+    hyp_phone: str | None  # system's hypothesis phone; None for a deletion
+    count: int
+
+
+def _top_phone_pairs(
+    judgements: list[PhonemeJudgement], predicate, n: int
+) -> list[PhonePairCount]:
+    counts: Counter[tuple[str, str | None]] = Counter(
+        (j.reference_phone, j.system_actual)
+        for j in judgements
+        if not j.excluded and j.system_flagged and predicate(j)
+    )
+    return [
+        PhonePairCount(reference_phone=ref, hyp_phone=hyp, count=count)
+        for (ref, hyp), count in counts.most_common(n)
+    ]
+
+
+def top_false_reject_pairs(judgements: list[PhonemeJudgement], n: int = 20) -> list[PhonePairCount]:
+    """(reference_phone, hyp_phone) pairs behind false rejects, most frequent first.
+
+    A false reject is a position where ground truth says the phone was
+    pronounced correctly but the system flagged it anyway. High-frequency
+    pairs are candidates for manual review: some may be notation variants
+    missing from g2p.EQUIVALENCE_CLASSES (docs/design_eval.md known-difficulty
+    list); others may be genuine over-detection by the recognizer. This
+    function only counts -- classifying a pair is a human judgment call
+    against EQUIVALENCE_CLASSES' inclusion criterion, not automated here.
+    """
+    return _top_phone_pairs(judgements, lambda j: not j.ground_truth_mispronounced, n)
+
+
+def top_true_reject_pairs(judgements: list[PhonemeJudgement], n: int = 20) -> list[PhonePairCount]:
+    """(reference_phone, hyp_phone) pairs behind true rejects, most frequent first.
+
+    A true reject is a position where ground truth says the phone was
+    mispronounced and the system correctly flagged it. Comparing this
+    distribution against top_false_reject_pairs for the same (reference,
+    hyp) pair tests whether a high false-reject count reflects genuine
+    rater leniency on borderline cases (the same pair appears often on both
+    sides) versus the model being systematically too strict for that pair
+    (it appears almost only on the false-reject side).
+    """
+    return _top_phone_pairs(judgements, lambda j: j.ground_truth_mispronounced, n)
+
+
+@dataclass(frozen=True)
 class InsertionStats:
     total: int
     utterance_count: int
@@ -241,12 +294,16 @@ class MetricsResult:
     der: float
     der_counts: DerCounts
     insertion_stats: InsertionStats
+    top_false_rejects: list[PhonePairCount]
+    top_true_rejects: list[PhonePairCount]
 
 
 def compute_metrics(
     judgements: list[PhonemeJudgement],
     insertions: list[InsertionRecord],
     utterance_count: int,
+    top_n_false_rejects: int = 20,
+    top_n_true_rejects: int = 20,
 ) -> MetricsResult:
     confusion = compute_confusion(judgements)
     der_value, der_counts = compute_der(judgements)
@@ -257,6 +314,8 @@ def compute_metrics(
         der=der_value,
         der_counts=der_counts,
         insertion_stats=summarize_insertions(insertions, utterance_count),
+        top_false_rejects=top_false_reject_pairs(judgements, top_n_false_rejects),
+        top_true_rejects=top_true_reject_pairs(judgements, top_n_true_rejects),
     )
 
 
@@ -277,4 +336,6 @@ def to_json_dict(result: MetricsResult, run_metadata: dict) -> dict:
         "der_counts": asdict(result.der_counts),
         "der_adaptation_note": DER_ADAPTATION_NOTE,
         "insertion_stats": asdict(result.insertion_stats),
+        "top_false_rejects": [asdict(p) for p in result.top_false_rejects],
+        "top_true_rejects": [asdict(p) for p in result.top_true_rejects],
     }

@@ -31,7 +31,9 @@ from pronunciation_coach.evaluation.so762 import (
     ACCURACY_THRESHOLD_DEFAULT,
     UtteranceAnnotation,
     audio_path,
+    is_child,
     parse_scores,
+    parse_spk2age,
     parse_utt2spk,
     stratified_sample,
 )
@@ -205,6 +207,13 @@ def run_stage1(
     return newly_processed, skipped
 
 
+def _load_two_column_mapping(paths: list[Path], parse) -> dict:
+    mapping: dict = {}
+    for p in paths:
+        mapping.update(parse(p.read_text(encoding="utf-8")))
+    return mapping
+
+
 def _load_utterances(
     scores_json: Path, utt2spk_paths: list[Path], utt_ids: Path | None
 ) -> list[UtteranceAnnotation]:
@@ -212,14 +221,49 @@ def _load_utterances(
     (utt id does not embed speaker id -- see so762.parse_utt2spk) + optional
     utt-id restriction (e.g. a test-split or sampled subset list)."""
     raw = json.loads(scores_json.read_text(encoding="utf-8"))
-    speaker_by_utt: dict[str, str] = {}
-    for p in utt2spk_paths:
-        speaker_by_utt.update(parse_utt2spk(p.read_text(encoding="utf-8")))
+    speaker_by_utt = _load_two_column_mapping(utt2spk_paths, parse_utt2spk)
     utterances = parse_scores(raw, speaker_by_utt)
     if utt_ids is not None:
         wanted = set(utt_ids.read_text(encoding="utf-8").split())
         utterances = [u for u in utterances if u.utt_id in wanted]
     return utterances
+
+
+def age_group_breakdown(
+    utterances: list[UtteranceAnnotation],
+    hyp_by_utt: dict[str, list[str]],
+    threshold: float,
+    spk2age_paths: list[Path],
+) -> dict:
+    """Score child/adult subsets separately (docs/design_eval.md §1.3 DEI note).
+
+    Reuses run_stage2 on each speaker-age partition of `utterances`, against
+    the same already-recognized hyp_by_utt -- no stage1 rerun needed.
+    """
+    age_by_speaker = _load_two_column_mapping(spk2age_paths, parse_spk2age)
+    groups: dict[str, list[UtteranceAnnotation]] = {"child": [], "adult": []}
+    unknown_age = 0
+    for utt in utterances:
+        age = age_by_speaker.get(utt.speaker_id)
+        if age is None:
+            unknown_age += 1
+            continue
+        groups["child" if is_child(age) else "adult"].append(utt)
+
+    breakdown: dict = {}
+    for group_name, group_utterances in groups.items():
+        result, _, skipped = run_stage2(group_utterances, hyp_by_utt, threshold)
+        breakdown[group_name] = {
+            "n_utterances": len(group_utterances),
+            "n_scored": result.insertion_stats.utterance_count,
+            "n_skipped": len(skipped),
+            "far": result.far,
+            "frr": result.frr,
+            "confusion": asdict(result.confusion),
+        }
+    if unknown_age:
+        breakdown["n_utterances_unknown_age"] = unknown_age
+    return breakdown
 
 
 def _cmd_sample(args: argparse.Namespace) -> None:
@@ -292,9 +336,15 @@ def _cmd_score(args: argparse.Namespace) -> None:
         for j in judgements:
             f.write(json.dumps(asdict(j), ensure_ascii=False) + "\n")
 
+    metrics_payload = to_json_dict(result, run_metadata)
+    if args.spk2age:
+        metrics_payload["age_breakdown"] = age_group_breakdown(
+            utterances, hyp_by_utt, args.threshold, args.spk2age
+        )
+
     metrics_path = args.out_dir / "metrics.json"
     metrics_path.write_text(
-        json.dumps(to_json_dict(result, run_metadata), ensure_ascii=False, indent=2),
+        json.dumps(metrics_payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -341,6 +391,10 @@ def main() -> None:
     p_score.add_argument("--hyp-jsonl", type=Path, required=True)
     p_score.add_argument("--utt-ids", type=Path, default=None, help="restrict to these utt ids")
     p_score.add_argument("--out-dir", type=Path, required=True)
+    p_score.add_argument(
+        "--spk2age", type=Path, nargs="+", default=None,
+        help="optional: one or more spk2age files, adds a child/adult metrics breakdown",
+    )
     p_score.add_argument("--threshold", type=float, default=ACCURACY_THRESHOLD_DEFAULT)
     p_score.add_argument("--seed", type=int, default=None, help="for metadata only")
     p_score.add_argument("--run-id", default="run")

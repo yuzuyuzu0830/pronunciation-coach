@@ -78,6 +78,18 @@ HYP_PHONEMES = {
 SPEAKER_BY_UTT = {"0001010011": "0001", "0002030022": "0002"}
 
 
+AGE_BY_SPEAKER = {"0001": 10, "0002": 25}  # speaker 0001: child, 0002: adult
+
+
+def _write_spk2age(tmp_path: Path) -> list[Path]:
+    path = tmp_path / "spk2age"
+    path.write_text(
+        "\n".join(f"{spk} {age}" for spk, age in AGE_BY_SPEAKER.items()) + "\n",
+        encoding="utf-8",
+    )
+    return [path]
+
+
 def _write_utt2spk(tmp_path: Path) -> list[Path]:
     path = tmp_path / "utt2spk"
     path.write_text(
@@ -129,6 +141,7 @@ def test_cmd_score_writes_expected_output_files(tmp_path):
         hyp_jsonl=hyp_path,
         utt_ids=None,
         out_dir=out_dir,
+        spk2age=None,
         threshold=0.5,
         seed=0,
         run_id="test_run",
@@ -150,6 +163,69 @@ def test_cmd_score_writes_expected_output_files(tmp_path):
     assert not (out_dir / "skipped.txt").exists()
 
 
+# --- age_group_breakdown ---
+
+
+@requires_espeak
+def test_age_group_breakdown_splits_by_child_adult(tmp_path):
+    """0001 (age 10, child) has "this is high"; 0002 (age 25, adult) has "water"."""
+    utterances = evaluate_detection.parse_scores(SCORES, SPEAKER_BY_UTT)
+    breakdown = evaluate_detection.age_group_breakdown(
+        utterances, HYP_PHONEMES, threshold=0.5, spk2age_paths=_write_spk2age(tmp_path)
+    )
+    assert breakdown["child"]["n_utterances"] == 1  # speaker 0001 -> "this is high"
+    assert breakdown["adult"]["n_utterances"] == 1  # speaker 0002 -> "water"
+    assert breakdown["child"]["n_scored"] == 1
+    assert breakdown["adult"]["n_scored"] == 1
+    assert "n_utterances_unknown_age" not in breakdown
+
+
+@requires_espeak
+def test_age_group_breakdown_counts_unknown_age_speakers(tmp_path):
+    spk2age_path = tmp_path / "spk2age"
+    spk2age_path.write_text("0001 10\n", encoding="utf-8")  # 0002 deliberately omitted
+    utterances = evaluate_detection.parse_scores(SCORES, SPEAKER_BY_UTT)
+    breakdown = evaluate_detection.age_group_breakdown(
+        utterances, HYP_PHONEMES, threshold=0.5, spk2age_paths=[spk2age_path]
+    )
+    assert breakdown["n_utterances_unknown_age"] == 1
+    assert breakdown["adult"]["n_utterances"] == 0
+
+
+@requires_espeak
+def test_cmd_score_with_spk2age_adds_age_breakdown_to_metrics(tmp_path):
+    scores_path = tmp_path / "scores.json"
+    scores_path.write_text(json.dumps(SCORES), encoding="utf-8")
+    hyp_path = tmp_path / "hyp_phonemes.jsonl"
+    hyp_path.write_text(
+        "\n".join(
+            json.dumps({"utt_id": utt_id, "phonemes": phones})
+            for utt_id, phones in HYP_PHONEMES.items()
+        ),
+        encoding="utf-8",
+    )
+    out_dir = tmp_path / "results"
+
+    args = evaluate_detection.argparse.Namespace(
+        scores_json=scores_path,
+        utt2spk=_write_utt2spk(tmp_path),
+        hyp_jsonl=hyp_path,
+        utt_ids=None,
+        out_dir=out_dir,
+        spk2age=_write_spk2age(tmp_path),
+        threshold=0.5,
+        seed=0,
+        run_id="with_age",
+        subset_description="fixture",
+        model_name="fixture-model",
+    )
+    evaluate_detection._cmd_score(args)
+
+    metrics = json.loads((out_dir / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["age_breakdown"]["child"]["n_utterances"] == 1
+    assert metrics["age_breakdown"]["adult"]["n_utterances"] == 1
+
+
 @requires_espeak
 def test_cmd_score_reports_skipped_utterances_missing_from_hyp_jsonl(tmp_path):
     scores_path = tmp_path / "scores.json"
@@ -168,6 +244,7 @@ def test_cmd_score_reports_skipped_utterances_missing_from_hyp_jsonl(tmp_path):
         hyp_jsonl=hyp_path,
         utt_ids=None,
         out_dir=out_dir,
+        spk2age=None,
         threshold=0.5,
         seed=0,
         run_id="partial",
@@ -390,6 +467,7 @@ def test_cmd_score_exits_when_every_utterance_g2p_fails(tmp_path, monkeypatch):
         hyp_jsonl=hyp_path,
         utt_ids=None,
         out_dir=out_dir,
+        spk2age=None,
         threshold=0.5,
         seed=0,
         run_id="empty",

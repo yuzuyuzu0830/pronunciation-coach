@@ -44,6 +44,20 @@ def is_mispronounced(accuracy: float, threshold: float = ACCURACY_THRESHOLD_DEFA
     return accuracy < threshold
 
 
+def _parse_two_column_file(text: str, file_desc: str) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            key, value = line.split()
+        except ValueError:
+            raise ValueError(f"Malformed {file_desc} line (expected 'id value'): {line!r}")
+        mapping[key] = value
+    return mapping
+
+
 def parse_utt2spk(text: str) -> dict[str, str]:
     """Parse a Kaldi-style utt2spk file: 'utt_id speaker_id' per line.
 
@@ -53,17 +67,22 @@ def parse_utt2spk(text: str) -> dict[str, str]:
     utt2spk is the only authoritative source, so speaker id must always be
     looked up here, never derived from the utt id string.
     """
-    mapping: dict[str, str] = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            utt_id, speaker_id = line.split()
-        except ValueError:
-            raise ValueError(f"Malformed utt2spk line (expected 'utt_id speaker_id'): {line!r}")
-        mapping[utt_id] = speaker_id
-    return mapping
+    return _parse_two_column_file(text, "utt2spk")
+
+
+def parse_spk2age(text: str) -> dict[str, int]:
+    """Parse a Kaldi-style spk2age file: 'speaker_id age' per line."""
+    return {spk: int(age) for spk, age in _parse_two_column_file(text, "spk2age").items()}
+
+
+# Confirmed against the real corpus (2026-07-22): ages split cleanly into
+# 6-15 (25 speakers) and 19-43 (100 speakers) with no speaker aged 16-18, so
+# any cutoff placed in that gap gives the same classification.
+CHILD_AGE_MAX = 15
+
+
+def is_child(age: int) -> bool:
+    return age <= CHILD_AGE_MAX
 
 
 def audio_path(utt: UtteranceAnnotation, wave_root: Path) -> Path:

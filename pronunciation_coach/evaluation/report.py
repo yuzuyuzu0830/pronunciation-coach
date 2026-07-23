@@ -5,7 +5,14 @@ Pure string formatting only -- callers handle writing the file.
 
 from __future__ import annotations
 
-from pronunciation_coach.evaluation.metrics import DER_ADAPTATION_NOTE, MetricsResult
+from pronunciation_coach.evaluation.metrics import DER_ADAPTATION_NOTE, MetricsResult, PhonePairCount
+
+
+def _pair_rows(pairs: list[PhonePairCount]) -> list[str]:
+    return [
+        f"| {p.reference_phone} | {p.hyp_phone if p.hyp_phone is not None else '(deleted)'} | {p.count} |"
+        for p in pairs
+    ]
 
 
 def render_report(result: MetricsResult, run_metadata: dict) -> str:
@@ -46,6 +53,28 @@ def render_report(result: MetricsResult, run_metadata: dict) -> str:
         "",
         f"- Insertions: {ins.total} ({ins.per_utterance_rate:.2f}/utt over {ins.utterance_count} utterances)",
         f"- Of which vowel insertions: {ins.vowel_count}",
+        "",
+        "## Top false-reject (reference, hyp) pairs",
+        "",
+        "Most frequent (reference phone, hypothesis phone) pairs behind false rejects "
+        "(ground truth says correct, system flagged anyway). Candidates for manual review "
+        "against g2p.EQUIVALENCE_CLASSES' inclusion criterion -- not classified here.",
+        "",
+        "| reference | hyp | count |",
+        "|---|---|---|",
+        *_pair_rows(result.top_false_rejects),
+        "",
+        "## Top true-reject (reference, hyp) pairs",
+        "",
+        "Most frequent (reference phone, hypothesis phone) pairs behind true rejects "
+        "(ground truth says mispronounced, system correctly flagged it). Compare against "
+        "the false-reject table above for the same pair: appearing on both sides suggests "
+        "rater leniency on a borderline case; appearing almost only as a false reject "
+        "suggests the model is systematically too strict for that pair.",
+        "",
+        "| reference | hyp | count |",
+        "|---|---|---|",
+        *_pair_rows(result.top_true_rejects),
         "",
         "## Known limitations",
         "",

@@ -5,6 +5,7 @@ from pronunciation_coach.evaluation.metrics import (
     DER_ADAPTATION_NOTE,
     InsertionRecord,
     PhonemeJudgement,
+    PhonePairCount,
     build_utterance_judgements,
     compute_confusion,
     compute_der,
@@ -13,6 +14,8 @@ from pronunciation_coach.evaluation.metrics import (
     compute_metrics,
     summarize_insertions,
     to_json_dict,
+    top_false_reject_pairs,
+    top_true_reject_pairs,
 )
 from pronunciation_coach.evaluation.so762 import (
     Mispronunciation,
@@ -75,16 +78,19 @@ def test_build_utterance_judgements_matches_and_flags():
     assert dh.system_flagged is True
     assert dh.system_op == "substitution"
     assert dh.system_actual == "d"
+    assert dh.reference_phone == "ð"
     assert dh.pronounced_phone == "D"
     assert dh.excluded is False
 
     hh = by_phone[("HIGH", "HH")]
     assert hh.ground_truth_mispronounced is True
     assert hh.system_flagged is False  # missed: false accept
+    assert hh.reference_phone == "h"
 
     ih1_this = by_phone[("THIS", "IH1")]
     assert ih1_this.ground_truth_mispronounced is False
     assert ih1_this.system_flagged is False  # correctly accepted
+    assert ih1_this.reference_phone == "ɪ"
 
 
 def test_build_utterance_judgements_uses_global_reference_positions():
@@ -121,6 +127,7 @@ def test_build_utterance_judgements_marks_unmapped_gt_phone_excluded():
     t_judgement = next(j for j in judgements if j.gt_phone == "T")
     assert t_judgement.excluded is True
     assert t_judgement.exclusion_reason == "unmapped_position"
+    assert t_judgement.reference_phone is None
 
 
 def test_build_utterance_judgements_collects_insertions():
@@ -142,7 +149,13 @@ def test_build_utterance_judgements_collects_insertions():
 # --- compute_confusion / compute_far / compute_frr ---
 
 
-def judgement(mispronounced: bool, flagged: bool, excluded: bool = False) -> PhonemeJudgement:
+def judgement(
+    mispronounced: bool,
+    flagged: bool,
+    excluded: bool = False,
+    reference_phone: str | None = "R",
+    actual: str | None = "x",
+) -> PhonemeJudgement:
     return PhonemeJudgement(
         utt_id="u",
         word="w",
@@ -151,7 +164,8 @@ def judgement(mispronounced: bool, flagged: bool, excluded: bool = False) -> Pho
         ground_truth_mispronounced=mispronounced,
         system_flagged=flagged,
         system_op="substitution" if flagged else None,
-        system_actual="x" if flagged else None,
+        system_actual=actual if flagged else None,
+        reference_phone=None if excluded else reference_phone,
         pronounced_phone=None,
         excluded=excluded,
         exclusion_reason="unmapped_position" if excluded else None,
@@ -205,6 +219,7 @@ def der_judgement(
         system_flagged=flagged,
         system_op=op,
         system_actual=actual,
+        reference_phone=None if excluded else "R",
         pronounced_phone=pronounced_phone,
         excluded=excluded,
         exclusion_reason=None,
@@ -254,6 +269,98 @@ def test_compute_der_ignores_false_accepts_and_true_accepts():
     assert der == 0.0
 
 
+# --- top_false_reject_pairs ---
+
+
+def test_top_false_reject_pairs_counts_and_orders_by_frequency():
+    judgements = [
+        judgement(mispronounced=False, flagged=True, reference_phone="ɜː", actual="ɚ"),
+        judgement(mispronounced=False, flagged=True, reference_phone="ɜː", actual="ɚ"),
+        judgement(mispronounced=False, flagged=True, reference_phone="ð", actual="d"),
+    ]
+    top = top_false_reject_pairs(judgements)
+    assert top == [
+        PhonePairCount(reference_phone="ɜː", hyp_phone="ɚ", count=2),
+        PhonePairCount(reference_phone="ð", hyp_phone="d", count=1),
+    ]
+
+
+def test_top_false_reject_pairs_ignores_non_false_reject_judgements():
+    judgements = [
+        judgement(mispronounced=False, flagged=False),  # TA
+        judgement(mispronounced=True, flagged=True),  # TR
+        judgement(mispronounced=True, flagged=False),  # FA
+        judgement(mispronounced=True, flagged=True, excluded=True),  # excluded
+    ]
+    assert top_false_reject_pairs(judgements) == []
+
+
+def test_top_false_reject_pairs_represents_deletion_as_none_hyp():
+    j = PhonemeJudgement(
+        utt_id="u",
+        word="w",
+        gt_phone="P",
+        gt_accuracy=2.0,
+        ground_truth_mispronounced=False,
+        system_flagged=True,
+        system_op="deletion",
+        system_actual=None,
+        reference_phone="s",
+        pronounced_phone=None,
+        excluded=False,
+        exclusion_reason=None,
+    )
+    assert top_false_reject_pairs([j]) == [PhonePairCount(reference_phone="s", hyp_phone=None, count=1)]
+
+
+def test_top_false_reject_pairs_respects_n_limit():
+    judgements = [
+        judgement(mispronounced=False, flagged=True, reference_phone=f"p{i}", actual="x")
+        for i in range(5)
+    ]
+    assert len(top_false_reject_pairs(judgements, n=3)) == 3
+
+
+# --- top_true_reject_pairs ---
+
+
+def test_top_true_reject_pairs_counts_and_orders_by_frequency():
+    judgements = [
+        judgement(mispronounced=True, flagged=True, reference_phone="ð", actual="d"),
+        judgement(mispronounced=True, flagged=True, reference_phone="ð", actual="d"),
+        judgement(mispronounced=True, flagged=True, reference_phone="ɜː", actual="ɚ"),
+    ]
+    top = top_true_reject_pairs(judgements)
+    assert top == [
+        PhonePairCount(reference_phone="ð", hyp_phone="d", count=2),
+        PhonePairCount(reference_phone="ɜː", hyp_phone="ɚ", count=1),
+    ]
+
+
+def test_top_true_reject_pairs_ignores_non_true_reject_judgements():
+    judgements = [
+        judgement(mispronounced=False, flagged=False),  # TA
+        judgement(mispronounced=False, flagged=True),  # FR
+        judgement(mispronounced=True, flagged=False),  # FA
+        judgement(mispronounced=True, flagged=True, excluded=True),  # excluded
+    ]
+    assert top_true_reject_pairs(judgements) == []
+
+
+def test_top_false_and_true_reject_pairs_split_the_same_pair_by_side():
+    """The same (reference, hyp) pair can appear on both sides -- this is
+    exactly the rater-leniency-vs-model-strictness comparison the pair
+    tables support: same phones, but ground truth disagreed on whether it
+    was actually mispronounced each time."""
+    judgements = [
+        judgement(mispronounced=False, flagged=True, reference_phone="ð", actual="z"),  # FR
+        judgement(mispronounced=True, flagged=True, reference_phone="ð", actual="z"),  # TR
+        judgement(mispronounced=True, flagged=True, reference_phone="ð", actual="z"),  # TR
+    ]
+    assert top_false_reject_pairs(judgements) == [PhonePairCount("ð", "z", 1)]
+    assert top_true_reject_pairs(judgements) == [PhonePairCount("ð", "z", 2)]
+
+
 # --- summarize_insertions ---
 
 
@@ -290,3 +397,5 @@ def test_compute_metrics_and_to_json_dict_shape():
     assert payload["der_adaptation_note"] == DER_ADAPTATION_NOTE
     assert payload["confusion"]["true_reject"] == 1
     assert "insertion_stats" in payload
+    assert payload["top_false_rejects"] == []  # neither judgement here is a false reject
+    assert len(payload["top_true_rejects"]) == 1  # the mispronounced=True, flagged=True one
