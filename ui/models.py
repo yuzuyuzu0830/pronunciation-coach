@@ -57,7 +57,11 @@ def check_espeak_and_trial_sentences() -> None:
     for sentence in TRIAL_SENTENCES:
         try:
             to_phonemes_by_word(sentence.text)
-        except ValueError as e:
+        # ValueError: per-text word/group mismatch (g2p contract).
+        # RuntimeError/OSError: phonemizer/espeak backend failures that
+        # to_phonemes_by_word documents as propagating; wrap so app.py's
+        # StartupError handler can fail-fast instead of dumping a traceback.
+        except (ValueError, RuntimeError, OSError) as e:
             raise StartupError(
                 f"Trial sentence {sentence.text!r} failed g2p: {e}. "
                 "Fix or remove it from ui/sentences.py."
