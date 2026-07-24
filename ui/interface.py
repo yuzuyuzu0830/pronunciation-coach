@@ -9,18 +9,22 @@ instead of unit-testing it.
 
 from __future__ import annotations
 
+import html
 from pathlib import Path
 
 import gradio as gr
 
-from pronunciation_coach.types import Diagnosis
+from pronunciation_coach.g2p import normalize, to_phonemes_by_word
+from pronunciation_coach.types import Diagnosis, DiagnosisReport, PhonemeError
 from ui import config
 from ui.models import AppModels
+from ui.phoneme_hints import locate_grapheme
 from ui.runner import TrialState, run_trial
 from ui.sentences import TRIAL_SENTENCES
 from ui.trial_logging import TargetSource
 
 RESULT_HEADERS = ["#", "Word", "Type", "expected", "actual", "Misread?"]
+RESULT_DATATYPES = ["str", "html", "str", "str", "str", "str"]  # Word column renders HTML
 
 
 def resolve_target(sentence_choice: str | None, custom_text: str) -> tuple[str | None, TargetSource]:
@@ -35,9 +39,91 @@ def resolve_target(sentence_choice: str | None, custom_text: str) -> tuple[str |
     return None, "preset"
 
 
+def _report_word_spans(report: DiagnosisReport) -> list[tuple[list[str], int]] | None:
+    """Recompute (word_phonemes, start_offset) for each word, the same way
+    Pipeline.diagnose() builds word spans internally -- DiagnosisReport
+    doesn't store them (docs/design_ui.md §11 records why this is
+    recomputed here instead of extending that data contract: a UI-only
+    display need shouldn't grow the core detection type). Best-effort: None
+    if g2p can't reproduce it, so the table just falls back to plain words.
+    """
+    base_text = report.target_text if report.target_text is not None else report.transcript
+    try:
+        raw_spans = to_phonemes_by_word(base_text.lower())
+    except Exception:
+        return None
+    spans: list[tuple[list[str], int]] = []
+    offset = 0
+    for _, phones in raw_spans:
+        phones = normalize(phones)
+        spans.append((phones, offset))
+        offset += len(phones)
+    return spans
+
+
+def _word_phonemes_at(
+    word_spans: list[tuple[list[str], int]] | None, position: int
+) -> tuple[list[str], int] | None:
+    """The (word_phonemes, local_index) containing global reference index
+    `position`, or None if word_spans is unavailable or position falls
+    outside every span (defensive)."""
+    if word_spans is None:
+        return None
+    for phones, offset in word_spans:
+        if offset <= position < offset + len(phones):
+            return phones, position - offset
+    return None
+
+
+def _highlight_span(word: str, span: tuple[int, int], style: str) -> str:
+    start, end = span
+    before, target, after = word[:start], word[start:end], word[end:]
+    css = (
+        "text-decoration: underline; text-decoration-color: crimson; "
+        "text-decoration-thickness: 2px;"
+        if style == "deletion"
+        else "color: crimson; font-weight: bold;"
+    )
+    return (
+        html.escape(before)
+        + f'<span style="{css}">{html.escape(target)}</span>'
+        + html.escape(after)
+    )
+
+
+def _word_cell_html(error: PhonemeError, word_spans: list[tuple[list[str], int]] | None) -> str:
+    """The Word column's content: the spelled word with the letters behind
+    the error highlighted, when locate_grapheme can place them; otherwise
+    (or for an insertion, whose extra sound isn't tied to any letter) plain
+    text, optionally with a "+/x/" suffix for what was added."""
+    word = error.word or "-"
+    if error.op == "insertion":
+        escaped = html.escape(word)
+        if error.actual is None:
+            return escaped
+        return escaped + f' <span style="color: crimson;">+/{html.escape(error.actual)}/</span>'
+
+    span = None
+    local = _word_phonemes_at(word_spans, error.position)
+    if local is not None and error.expected is not None:
+        phones, local_index = local
+        span = locate_grapheme(word, error.expected, local_index, phones)
+    if span is None:
+        return html.escape(word)
+    style = "deletion" if error.op == "deletion" else "substitution"
+    return _highlight_span(word, span, style)
+
+
+def _actual_cell(error: PhonemeError) -> str:
+    if error.op == "deletion":
+        return "(missing)"
+    return f"/{error.actual}/" if error.actual else "-"
+
+
 def _errors_to_dataframe(diagnosis: Diagnosis | None) -> list[list]:
     if diagnosis is None:
         return []
+    word_spans = _report_word_spans(diagnosis.report)
     rows = []
     for i, error in enumerate(diagnosis.report.errors, start=1):
         if error.possibly_misread:
@@ -45,7 +131,14 @@ def _errors_to_dataframe(diagnosis: Diagnosis | None) -> list[list]:
         else:
             misread = ""
         rows.append(
-            [i, error.word or "-", error.op, error.expected or "-", error.actual or "-", misread]
+            [
+                i,
+                _word_cell_html(error, word_spans),
+                error.op,
+                f"/{error.expected}/" if error.expected else "-",
+                _actual_cell(error),
+                misread,
+            ]
         )
     return rows
 
@@ -140,7 +233,9 @@ def build_app(models: AppModels) -> gr.Blocks:
 
         status = gr.Markdown()
         transcript_display = gr.Markdown()
-        results_table = gr.Dataframe(headers=RESULT_HEADERS, label="Detected errors")
+        results_table = gr.Dataframe(
+            headers=RESULT_HEADERS, datatype=RESULT_DATATYPES, label="Detected errors"
+        )
         explanation = gr.Markdown(label="Explanation")
         log_status = gr.Markdown()
 

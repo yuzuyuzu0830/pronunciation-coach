@@ -1,3 +1,5 @@
+import pytest
+
 from pronunciation_coach.types import (
     Diagnosis,
     DiagnosisReport,
@@ -11,7 +13,17 @@ from ui.interface import (
     _transcript_markdown,
     resolve_target,
 )
+import ui.interface as interface_module
 from ui.runner import TrialState
+
+try:
+    from phonemizer.backend import EspeakBackend
+
+    ESPEAK_AVAILABLE = EspeakBackend.is_available()
+except Exception:
+    ESPEAK_AVAILABLE = False
+
+requires_espeak = pytest.mark.skipif(not ESPEAK_AVAILABLE, reason="espeak-ng is not installed")
 
 
 # --- resolve_target ---
@@ -34,10 +46,10 @@ def test_resolve_target_none_when_both_empty():
 # --- _errors_to_dataframe ---
 
 
-def make_diagnosis(errors: list[PhonemeError], validation=None) -> Diagnosis:
+def make_diagnosis(errors: list[PhonemeError], validation=None, target_text="this is high") -> Diagnosis:
     report = DiagnosisReport(
-        transcript="this is high",
-        target_text="this is high",
+        transcript=target_text,
+        target_text=target_text,
         reference_phonemes=["ð", "ɪ", "s"],
         hypothesis_phonemes=["d", "ɪ", "s"],
         errors=errors,
@@ -54,10 +66,67 @@ def test_errors_to_dataframe_empty_for_no_errors():
     assert _errors_to_dataframe(make_diagnosis([])) == []
 
 
-def test_errors_to_dataframe_renders_substitution_row():
+@requires_espeak
+def test_errors_to_dataframe_highlights_substitution_in_word():
+    """target_text="this is high"; "this" -> [ð, ɪ, s] (real g2p), so the ð
+    at local index 0 should highlight "th" (grapheme for ð) in bold/color."""
     diagnosis = make_diagnosis([PhonemeError("substitution", "ð", "d", 0, "this")])
     rows = _errors_to_dataframe(diagnosis)
-    assert rows == [[1, "this", "substitution", "ð", "d", ""]]
+    word_html, op, expected, actual, misread = rows[0][1:]
+    assert word_html == '<span style="color: crimson; font-weight: bold;">th</span>is'
+    assert op == "substitution"
+    assert expected == "/ð/"
+    assert actual == "/d/"
+    assert misread == ""
+
+
+@requires_espeak
+def test_errors_to_dataframe_highlights_deletion_with_underline_and_missing_actual():
+    """"desk" -> [d, ɛ, s, k] (real g2p); deleting the final k should
+    underline the "k" and show "(missing)" rather than a phoneme symbol.
+    ("high" is deliberately avoided here: its silent "gh" makes the "h"
+    grapheme ambiguous -- see test_locate_grapheme_returns_none_for_irregular_spelling.)"""
+    diagnosis = make_diagnosis(
+        [PhonemeError("deletion", "k", None, 3, "desk")], target_text="desk"
+    )
+    rows = _errors_to_dataframe(diagnosis)
+    word_html, op, expected, actual, _ = rows[0][1:]
+    assert "text-decoration: underline" in word_html
+    assert ">k<" in word_html
+    assert expected == "/k/"
+    assert actual == "(missing)"
+
+
+def test_errors_to_dataframe_insertion_appends_suffix_without_highlighting_a_letter():
+    """An insertion isn't tied to any letter in the target spelling, so the
+    word itself stays plain and the extra sound is appended after it."""
+    diagnosis = make_diagnosis([PhonemeError("insertion", None, "ə", 2, "this")])
+    rows = _errors_to_dataframe(diagnosis)
+    word_html, op, expected, actual, _ = rows[0][1:]
+    assert word_html == 'this <span style="color: crimson;">+/ə/</span>'
+    assert expected == "-"
+    assert actual == "/ə/"
+
+
+def test_errors_to_dataframe_falls_back_to_plain_word_when_g2p_unavailable(monkeypatch):
+    """Word-span recomputation is best-effort (docs/design_ui.md §11): if
+    g2p can't run, the table must still render, just without a highlight."""
+
+    def boom(text):
+        raise RuntimeError("espeak backend unavailable")
+
+    monkeypatch.setattr(interface_module, "to_phonemes_by_word", boom)
+    diagnosis = make_diagnosis([PhonemeError("substitution", "ð", "d", 0, "this")])
+    rows = _errors_to_dataframe(diagnosis)
+    assert rows[0][1] == "this"  # plain, no <span>
+
+
+def test_errors_to_dataframe_falls_back_to_plain_word_when_position_unlocatable():
+    """position=99 doesn't fall inside any recomputed word span."""
+    diagnosis = make_diagnosis([PhonemeError("substitution", "ð", "d", 99, "this")])
+    rows = _errors_to_dataframe(diagnosis)
+    # No <span> means locate_grapheme was never even reached for this row.
+    assert "<span" not in rows[0][1]
 
 
 def test_errors_to_dataframe_marks_misread_with_replacement():
@@ -78,13 +147,6 @@ def test_errors_to_dataframe_marks_misread_without_replacement_as_skipped():
     )
     rows = _errors_to_dataframe(diagnosis)
     assert rows[0][5] == "(skipped?)"
-
-
-def test_errors_to_dataframe_uses_dash_for_missing_phones():
-    diagnosis = make_diagnosis([PhonemeError("deletion", "h", None, 3, "high")])
-    rows = _errors_to_dataframe(diagnosis)
-    assert rows[0][3] == "h"
-    assert rows[0][4] == "-"
 
 
 # --- _transcript_markdown ---
