@@ -14,10 +14,30 @@ from pronunciation_coach.types import ReadingValidation
 
 DEFAULT_WER_THRESHOLD = 0.5
 
+# Whisper sometimes transcribes a spoken number as digits ("three" -> "3"),
+# which the un-normalized target text never does, producing a false
+# word-mismatch / inflated WER for a correctly-read word (observed in UI
+# E2E testing, 2026-07-24: a participant reading "three" correctly got
+# flagged as a possible misread because the transcript said "3").
+# Deliberately limited to plain cardinals 0-20 and the bare tens 30-100:
+# ordinals ("3rd") and compounds ("twenty-three") are NOT covered -- they
+# don't match these dict keys and pass through unchanged. Trial sentences
+# should avoid them (docs/design_ui.md); this table isn't a general
+# number-to-words converter.
+_NUMBER_WORDS: dict[str, str] = {
+    "0": "zero", "1": "one", "2": "two", "3": "three", "4": "four",
+    "5": "five", "6": "six", "7": "seven", "8": "eight", "9": "nine",
+    "10": "ten", "11": "eleven", "12": "twelve", "13": "thirteen",
+    "14": "fourteen", "15": "fifteen", "16": "sixteen", "17": "seventeen",
+    "18": "eighteen", "19": "nineteen", "20": "twenty",
+    "30": "thirty", "40": "forty", "50": "fifty", "60": "sixty",
+    "70": "seventy", "80": "eighty", "90": "ninety", "100": "hundred",
+}
+
 
 def _normalize_words(text: str) -> list[str]:
     words = (w.strip(string.punctuation) for w in text.lower().split())
-    return [w for w in words if w]
+    return [_NUMBER_WORDS.get(w, w) for w in words if w]
 
 
 def validate_reading(

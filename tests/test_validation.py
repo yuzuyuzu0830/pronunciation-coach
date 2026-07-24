@@ -88,3 +88,52 @@ def test_word_mismatches_ignores_extra_transcript_words():
     """An inserted word has no target-side word to flag."""
     result = validate_reading("this is high", "this is very high")
     assert result.word_mismatches == {}
+
+
+# --- number normalization (docs/devlog.md 2026-07-24: Whisper transcribing
+# a spoken number as digits caused a false word-mismatch / misread flag) ---
+
+
+def test_digit_transcript_matches_spelled_out_target():
+    result = validate_reading("three thin books", "3 thin books")
+    assert result.wer == 0.0
+    assert result.passed
+    assert result.target_words == ["three", "thin", "books"]
+    assert result.transcript_words == ["three", "thin", "books"]
+
+
+def test_digit_target_matches_spelled_out_transcript():
+    """Normalization must apply to both sides, not just the transcript."""
+    result = validate_reading("i have 3 books", "i have three books")
+    assert result.wer == 0.0
+    assert result.passed
+
+
+def test_number_normalization_covers_zero_through_twenty_and_bare_tens():
+    for digits, word in [
+        ("0", "zero"), ("7", "seven"), ("11", "eleven"), ("19", "nineteen"),
+        ("20", "twenty"), ("30", "thirty"), ("90", "ninety"), ("100", "hundred"),
+    ]:
+        result = validate_reading(word, digits)
+        assert result.wer == 0.0, f"{digits!r} should normalize to {word!r}"
+
+
+def test_number_normalization_does_not_cover_ordinals():
+    """"3rd" is out of scope by design; it must not silently become "three"."""
+    result = validate_reading("third", "3rd")
+    assert result.wer == 1.0
+    assert not result.passed
+
+
+def test_number_normalization_does_not_cover_compound_numbers():
+    """"23" is out of scope (only 0-20 and the bare tens are covered)."""
+    result = validate_reading("twenty three", "23")
+    assert result.wer == 1.0
+
+
+def test_word_mismatches_no_longer_false_flags_digit_transcription():
+    """Reproduces the exact reported bug: a participant reads "three"
+    correctly, Whisper transcribes "3" -- this must not be recorded as a
+    possible misread (docs/devlog.md 2026-07-24)."""
+    result = validate_reading("three thin books", "3 thin books")
+    assert result.word_mismatches == {}
