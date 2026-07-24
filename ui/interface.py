@@ -49,7 +49,9 @@ def _report_word_spans(report: DiagnosisReport) -> list[tuple[list[str], int]] |
     """
     base_text = report.target_text if report.target_text is not None else report.transcript
     try:
-        raw_spans = to_phonemes_by_word(base_text.lower())
+        # Pass base_text as-is: Pipeline.diagnose() does not lowercase before
+        # g2p, and espeak is case-sensitive for some words (US/us, Polish/polish).
+        raw_spans = to_phonemes_by_word(base_text)
     except Exception:
         return None
     spans: list[tuple[list[str], int]] = []

@@ -81,6 +81,20 @@ def test_errors_to_dataframe_highlights_substitution_in_word():
 
 
 @requires_espeak
+def test_errors_to_dataframe_highlights_capitalized_target_matching_diagnose_casing():
+    """_report_word_spans must g2p the cased target (same as diagnose()), not
+    lower() it first -- otherwise case-sensitive espeak outputs can shift
+    offsets and break highlights. Trial sentences start with capitals."""
+    diagnosis = make_diagnosis(
+        [PhonemeError("substitution", "ð", "d", 0, "This")],
+        target_text="This is high",
+    )
+    rows = _errors_to_dataframe(diagnosis)
+    word_html = rows[0][1]
+    assert word_html == '<span style="color: crimson; font-weight: bold;">Th</span>is'
+
+
+@requires_espeak
 def test_errors_to_dataframe_highlights_deletion_with_underline_and_missing_actual():
     """"desk" -> [d, ɛ, s, k] (real g2p); deleting the final k should
     underline the "k" and show "(missing)" rather than a phoneme symbol.

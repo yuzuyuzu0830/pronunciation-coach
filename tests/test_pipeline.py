@@ -90,6 +90,27 @@ def test_flag_misread_errors_without_mismatches_is_identity():
     assert flag_misread_errors(errors, {}) == errors
 
 
+def test_flag_misread_errors_matches_capitalized_word_to_lowercased_mismatch_key():
+    """G2P preserves case on PhonemeError.word; validator keys are lowercased.
+
+    Without normalize_word lookup, sentence-initial misreads (trial sentences
+    all start with a capital) would silently keep possibly_misread=False.
+    """
+    errors = [PhonemeError("substitution", "ð", "d", 0, "This")]
+    flagged = flag_misread_errors(errors, {"this": "dis"})
+    assert flagged[0].possibly_misread
+    assert flagged[0].misread_as == "dis"
+
+
+def test_flag_misread_errors_matches_digit_form_word_to_number_word_key():
+    """Mismatch keys may be digit-normalized ("3" -> "three"); error.word
+    must go through the same normalize_word path to hit the key."""
+    errors = [PhonemeError("substitution", "θ", "t", 0, "3")]
+    flagged = flag_misread_errors(errors, {"three": "free"})
+    assert flagged[0].possibly_misread
+    assert flagged[0].misread_as == "free"
+
+
 # --- Pipeline integration with fakes ---
 
 PHONEMES_BY_WORD = {
@@ -100,7 +121,8 @@ PHONEMES_BY_WORD = {
 
 
 def fake_g2p_by_word(text: str) -> list[tuple[str, list[str]]]:
-    return [(w, PHONEMES_BY_WORD[w]) for w in text.lower().split()]
+    # Preserve token casing (production g2p does); look up phonemes by lower key.
+    return [(w, PHONEMES_BY_WORD[w.lower()]) for w in text.split()]
 
 
 class FakeTranscriber:
@@ -198,6 +220,26 @@ def test_pipeline_flags_errors_in_misread_words():
         PhonemeError(
             "substitution", "h", "b", 5, "high",
             possibly_misread=True, misread_as="buy",
+        ),
+    ]
+
+
+def test_pipeline_flags_misread_on_capitalized_target_word():
+    """Capitalized G2P word tokens must still match lowercased mismatch keys."""
+    pipeline = make_pipeline(
+        FakeTranscriber("dis is high"),
+        FakeRecognizer(["d", "ɪ", "s", "ɪ", "z", "h", "aɪ"]),
+        FakeExplainer(),
+    )
+    result = pipeline.run(AUDIO, target_text="This is high")
+
+    assert isinstance(result, CoachingResult)
+    assert result.validation is not None
+    assert result.validation.word_mismatches == {"this": "dis"}
+    assert result.report.errors == [
+        PhonemeError(
+            "substitution", "ð", "d", 0, "This",
+            possibly_misread=True, misread_as="dis",
         ),
     ]
 

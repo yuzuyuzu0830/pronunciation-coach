@@ -22,7 +22,11 @@ from pronunciation_coach.types import (
     PipelineResult,
     ReadingMismatch,
 )
-from pronunciation_coach.validator import DEFAULT_WER_THRESHOLD, validate_reading
+from pronunciation_coach.validator import (
+    DEFAULT_WER_THRESHOLD,
+    normalize_word,
+    validate_reading,
+)
 
 
 class Transcriber(Protocol):
@@ -83,13 +87,24 @@ def flag_misread_errors(
 
     Such errors reflect a different word being read, not a pronunciation
     habit, so the explainer must switch to word-level guidance for them.
+
+    Lookup uses validator.normalize_word so G2P's case-preserving error.word
+    matches the lowercased (and digit-normalized) word_mismatches keys.
     """
-    return [
-        replace(error, possibly_misread=True, misread_as=word_mismatches[error.word])
-        if error.word in word_mismatches
-        else error
-        for error in errors
-    ]
+    flagged: list[PhonemeError] = []
+    for error in errors:
+        key = normalize_word(error.word) if error.word is not None else ""
+        if key and key in word_mismatches:
+            flagged.append(
+                replace(
+                    error,
+                    possibly_misread=True,
+                    misread_as=word_mismatches[key],
+                )
+            )
+        else:
+            flagged.append(error)
+    return flagged
 
 
 class Pipeline:

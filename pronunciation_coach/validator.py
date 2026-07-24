@@ -35,9 +35,20 @@ _NUMBER_WORDS: dict[str, str] = {
 }
 
 
+def normalize_word(token: str) -> str:
+    """Normalize one token the same way validate_reading keys word_mismatches.
+
+    Lowercase, strip punctuation, map bare digit cardinals via _NUMBER_WORDS.
+    Empty after stripping returns "" (callers that build word lists filter it).
+    """
+    stripped = token.strip(string.punctuation).lower()
+    if not stripped:
+        return ""
+    return _NUMBER_WORDS.get(stripped, stripped)
+
+
 def _normalize_words(text: str) -> list[str]:
-    words = (w.strip(string.punctuation) for w in text.lower().split())
-    return [_NUMBER_WORDS.get(w, w) for w in words if w]
+    return [w for tok in text.split() if (w := normalize_word(tok))]
 
 
 def validate_reading(
