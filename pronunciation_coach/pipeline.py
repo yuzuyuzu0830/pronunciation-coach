@@ -15,6 +15,8 @@ from pronunciation_coach.g2p import normalize, to_phonemes_by_word
 from pronunciation_coach.types import (
     AlignmentOp,
     CoachingResult,
+    Diagnosis,
+    DiagnoseResult,
     DiagnosisReport,
     PhonemeError,
     PipelineResult,
@@ -105,12 +107,18 @@ class Pipeline:
         self._g2p_by_word = g2p_by_word
         self._wer_threshold = wer_threshold
 
-    def run(
+    def diagnose(
         self,
         audio_path: Path,
         target_text: str | None = None,
         learner_l1: str = "Japanese",
-    ) -> PipelineResult:
+    ) -> DiagnoseResult:
+        """Everything through detection, stopping before explanation.
+
+        Split out from run() so a caller (the UI's staged display, trial
+        logging) can show/record detection results before paying the
+        explainer's latency (docs/design_ui.md §3).
+        """
         transcript = self._transcriber.transcribe(audio_path)
 
         validation = None
@@ -141,5 +149,24 @@ class Pipeline:
             errors=errors,
             learner_l1=learner_l1,
         )
-        explanation = self._explainer.explain(report)
-        return CoachingResult(report=report, explanation=explanation, validation=validation)
+        return Diagnosis(report=report, validation=validation)
+
+    def explain(self, diagnosis: Diagnosis) -> CoachingResult:
+        """The second half of run(), split out so a caller can display/log
+        the diagnosis before paying the explainer's latency (docs/design_ui.md
+        §3) instead of only ever getting both at once from run()."""
+        explanation = self._explainer.explain(diagnosis.report)
+        return CoachingResult(
+            report=diagnosis.report, explanation=explanation, validation=diagnosis.validation
+        )
+
+    def run(
+        self,
+        audio_path: Path,
+        target_text: str | None = None,
+        learner_l1: str = "Japanese",
+    ) -> PipelineResult:
+        diagnosis = self.diagnose(audio_path, target_text, learner_l1)
+        if isinstance(diagnosis, ReadingMismatch):
+            return diagnosis
+        return self.explain(diagnosis)

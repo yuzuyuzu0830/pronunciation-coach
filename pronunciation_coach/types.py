@@ -65,6 +65,25 @@ class ReadingMismatch:
 
 
 @dataclass(frozen=True)
+class Diagnosis:
+    """Pipeline.diagnose()'s success case: detection without an explanation yet.
+
+    validation travels alongside the report (not embedded in it) so callers
+    that only need detection -- e.g. the UI's staged display, or trial
+    logging that records WER even on a passing read -- don't have to go
+    through the explainer to see it (docs/design_ui.md §3).
+    """
+
+    report: DiagnosisReport
+    validation: ReadingValidation | None  # present only when target_text was given
+
+
+# Pipeline.diagnose() outcome: a diagnosis ready for explanation, or a
+# re-read request after validation.
+DiagnoseResult = Diagnosis | ReadingMismatch
+
+
+@dataclass(frozen=True)
 class CoachingResult:
     report: DiagnosisReport
     explanation: str

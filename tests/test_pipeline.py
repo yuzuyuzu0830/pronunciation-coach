@@ -4,6 +4,7 @@ from pronunciation_coach.pipeline import Pipeline, extract_errors, flag_misread_
 from pronunciation_coach.types import (
     AlignmentOp,
     CoachingResult,
+    Diagnosis,
     DiagnosisReport,
     PhonemeError,
     ReadingMismatch,
@@ -216,6 +217,82 @@ def test_pipeline_gate_failure_skips_phoneme_evaluation():
     assert result.validation.wer > 0.5
     assert not recognizer.called
     assert explainer.received is None
+
+
+# --- diagnose() / run() equivalence (docs/design_ui.md §3) ---
+
+
+def test_diagnose_returns_reading_mismatch_same_as_run():
+    recognizer = FakeRecognizer(["ð"])
+    explainer = FakeExplainer()
+    pipeline = make_pipeline(
+        FakeTranscriber("completely different words entirely"),
+        recognizer,
+        explainer,
+    )
+    diagnosis = pipeline.diagnose(AUDIO, target_text="this is high")
+
+    assert isinstance(diagnosis, ReadingMismatch)
+    assert not diagnosis.validation.passed
+    assert not recognizer.called  # gate failure short-circuits before recognition
+    assert explainer.received is None
+
+
+def test_diagnose_then_explain_matches_run_directly():
+    """run() must be exactly diagnose() + explainer.explain() composed: same
+    report, same validation, and explain() receiving the same report object."""
+    explainer_via_run = FakeExplainer()
+    pipeline_run = make_pipeline(
+        FakeTranscriber("this"),
+        FakeRecognizer(["d", "ɪ"]),
+        explainer_via_run,
+    )
+    run_result = pipeline_run.run(AUDIO, target_text="this")
+    assert isinstance(run_result, CoachingResult)
+
+    explainer_via_diagnose = FakeExplainer()
+    pipeline_diagnose = make_pipeline(
+        FakeTranscriber("this"),
+        FakeRecognizer(["d", "ɪ"]),
+        explainer_via_diagnose,
+    )
+    diagnosis = pipeline_diagnose.diagnose(AUDIO, target_text="this")
+    assert isinstance(diagnosis, Diagnosis)
+    assert diagnosis.report == run_result.report
+    assert diagnosis.validation == run_result.validation
+
+    explanation = explainer_via_diagnose.explain(diagnosis.report)
+    assert explanation == run_result.explanation
+    assert explainer_via_diagnose.received is diagnosis.report
+
+
+def test_explain_composes_with_diagnose_to_match_run():
+    explainer = FakeExplainer()
+    pipeline = make_pipeline(FakeTranscriber("this"), FakeRecognizer(["d", "ɪ"]), explainer)
+
+    diagnosis = pipeline.diagnose(AUDIO, target_text="this")
+    assert isinstance(diagnosis, Diagnosis)
+    coaching = pipeline.explain(diagnosis)
+
+    assert isinstance(coaching, CoachingResult)
+    assert coaching.report == diagnosis.report
+    assert coaching.validation == diagnosis.validation
+    assert coaching.explanation == "FAKE EXPLANATION"
+    assert explainer.received is diagnosis.report
+
+
+def test_diagnose_without_target_text_has_no_validation():
+    pipeline = make_pipeline(
+        FakeTranscriber("this"),
+        FakeRecognizer(["ð", "ɪ", "s"]),
+        FakeExplainer(),
+    )
+    diagnosis = pipeline.diagnose(AUDIO)
+
+    assert isinstance(diagnosis, Diagnosis)
+    assert diagnosis.validation is None
+    assert diagnosis.report.target_text is None
+    assert diagnosis.report.errors == []
 
 
 def test_pipeline_without_target_text_skips_validation():
