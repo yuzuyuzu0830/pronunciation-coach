@@ -129,7 +129,14 @@ def _errors_to_dataframe(diagnosis: Diagnosis | None) -> list[list]:
     rows = []
     for i, error in enumerate(diagnosis.report.errors, start=1):
         if error.possibly_misread:
-            misread = f'→ "{error.misread_as}"?' if error.misread_as else "(skipped?)"
+            # Soft phrasing: the transcript may itself be a mis-transcription
+            # (observed with Whisper on the P01 trial), so this isn't a
+            # confident claim about what the learner actually said.
+            misread = (
+                f'≠ transcript ("{error.misread_as}"?)'
+                if error.misread_as
+                else "≠ transcript (missing?)"
+            )
         else:
             misread = ""
         rows.append(

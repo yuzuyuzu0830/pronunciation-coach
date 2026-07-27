@@ -274,6 +274,29 @@ def _append_v3_error_section(
     lines.append("")
 
 
+def _is_zero_m(
+    uses_structured_knowledge: bool,
+    pronunciation_errors: list[PhonemeError],
+    report: DiagnosisReport,
+    full_explanation_limit: int,
+) -> bool:
+    """True for v3 when pronunciation errors exist but none has matched
+    knowledge (M=0). Recomputes the same split _append_v3_error_section will
+    make (an established pattern in this module -- see _facts_only_errors);
+    both call the pure _split_full_and_facts_only, so this costs a redundant
+    knowledge lookup, not a behavioral difference.
+    """
+    if not uses_structured_knowledge or not pronunciation_errors:
+        return False
+    full_pairs, _ = _split_full_and_facts_only(
+        pronunciation_errors,
+        report.reference_phonemes,
+        report.learner_l1,
+        full_explanation_limit,
+    )
+    return not full_pairs
+
+
 def build_prompt(
     report: DiagnosisReport,
     version: str = DEFAULT_PROMPT_VERSION,
@@ -292,11 +315,27 @@ def build_prompt(
     # trailing instruction text instead of failing loudly.
     uses_structured_knowledge = version == "v3"
 
+    pronunciation_errors = [e for e in report.errors if not e.possibly_misread]
+    # One notice per misread word, not per phoneme error inside it.
+    misread_notices = dict.fromkeys(
+        (e.word, e.misread_as) for e in report.errors if e.possibly_misread
+    )
+    # At M=0 the LLM must get no raw material to reconstruct errors from --
+    # the transcript line and the misread section (both data and
+    # instruction) are dropped entirely, not just the instruction: a
+    # confirmation run still saw the model reconstruct a word-level
+    # paraphrase from the transcript, and fabricate an empty misread-section
+    # heading from the generic role-instruction sentence alone even when no
+    # such section was given. Misread facts remain visible to the learner
+    # via the UI's Misread? column (ui/interface.py), so nothing is lost.
+    zero_m = _is_zero_m(uses_structured_knowledge, pronunciation_errors, report, full_explanation_limit)
+
     lines = [_ROLE_INSTRUCTIONS[version], ""]
     lines.append(f"Learner's first language (L1): {report.learner_l1}")
     if report.target_text is not None:
         lines.append(f'Target sentence: "{report.target_text}"')
-    lines.append(f'What the learner said (transcript): "{report.transcript}"')
+    if not zero_m:
+        lines.append(f'What the learner said (transcript): "{report.transcript}"')
     lines.append("")
 
     if not report.errors:
@@ -305,12 +344,6 @@ def build_prompt(
             "learner and encourage them to keep practicing."
         )
         return "\n".join(lines)
-
-    pronunciation_errors = [e for e in report.errors if not e.possibly_misread]
-    # One notice per misread word, not per phoneme error inside it.
-    misread_notices = dict.fromkeys(
-        (e.word, e.misread_as) for e in report.errors if e.possibly_misread
-    )
 
     if uses_structured_knowledge:
         _append_v3_error_section(lines, report, pronunciation_errors, full_explanation_limit)
@@ -321,7 +354,7 @@ def build_prompt(
             for i, error in enumerate(pronunciation_errors, start=1)
         )
         lines.append("")
-    if misread_notices:
+    if misread_notices and not zero_m:
         lines.append("Possible reading mistakes (a different word was read):")
         lines.extend(
             _format_misread_notice(word, read_as)
@@ -335,12 +368,15 @@ def build_prompt(
             "practical tip to fix it, considering difficulties typical for "
             "the learner's L1."
         )
-    if misread_notices:
+    if misread_notices and not zero_m:
         lines.append(
             "For each possible reading mistake, do not explain individual "
             "sounds — these are not pronunciation habits. Instead, point out "
             "which word was likely read (or that it was skipped), and ask the "
-            "learner to check the target word and read it again."
+            "learner to check the target word and read it again. Note that "
+            "the transcript itself may be a mis-transcription rather than a "
+            "genuine reading mistake, so phrase this as a possibility, not "
+            "a certainty."
         )
     return "\n".join(lines)
 

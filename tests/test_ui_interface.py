@@ -144,6 +144,9 @@ def test_errors_to_dataframe_falls_back_to_plain_word_when_position_unlocatable(
 
 
 def test_errors_to_dataframe_marks_misread_with_replacement():
+    """Softer than a confident '→ "buy"?': the transcript itself may be the
+    thing that's wrong (Whisper mis-transcription observed in the P01
+    trial), not necessarily what the learner said."""
     diagnosis = make_diagnosis(
         [
             PhonemeError(
@@ -152,7 +155,7 @@ def test_errors_to_dataframe_marks_misread_with_replacement():
         ]
     )
     rows = _errors_to_dataframe(diagnosis)
-    assert rows[0][5] == '→ "buy"?'
+    assert rows[0][5] == '≠ transcript ("buy"?)'
 
 
 def test_errors_to_dataframe_marks_misread_without_replacement_as_skipped():
@@ -160,7 +163,7 @@ def test_errors_to_dataframe_marks_misread_without_replacement_as_skipped():
         [PhonemeError("deletion", "h", None, 3, "high", possibly_misread=True, misread_as=None)]
     )
     rows = _errors_to_dataframe(diagnosis)
-    assert rows[0][5] == "(skipped?)"
+    assert rows[0][5] == "≠ transcript (missing?)"
 
 
 # --- _transcript_markdown ---

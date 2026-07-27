@@ -5,7 +5,11 @@ model/prompt setup.
 
 from __future__ import annotations
 
-WHISPER_MODEL_SIZE = "base"
+WHISPER_MODEL_SIZE = "small"
+# 2026-07-27: switched from base to small because base produced frequent
+# mis-transcriptions in the P01 trial (false gate failures / false misread flags).
+# medium did not beat small on accuracy and only increased load/inference cost
+# (docs/experiments/whisper_model_comparison_2026-07-27.md).
 # Current detection-pipeline default; update once the model comparison
 # (docs/experiments/phoneme_model_comparison_2026-07-23.md) reaches a decision.
 WAV2VEC2_MODEL_NAME = "facebook/wav2vec2-lv-60-espeak-cv-ft"

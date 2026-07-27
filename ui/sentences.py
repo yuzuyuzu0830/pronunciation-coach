@@ -19,6 +19,15 @@ class TrialSentence:
     note: str  # for the trial script/moderator
 
 
+# Retired preset wordings that still appear in results/trial_logs/trial_log.jsonl
+# (e.g. P01). Maps old target_text -> the current TRIAL_SENTENCES text that
+# replaced it, so analysis that resolves logged target_text back to a
+# TrialSentence (control vs elicitation, target_phonemes, …) still works.
+RETIRED_PRESET_TEXTS: dict[str, str] = {
+    "My name is Yuki and I live in Tokyo.": "I have some tea in my room.",
+}
+
+
 TRIAL_SENTENCES: tuple[TrialSentence, ...] = (
     TrialSentence(
         text="This is my brother's house.",
@@ -61,8 +70,35 @@ TRIAL_SENTENCES: tuple[TrialSentence, ...] = (
         note="control sentence 1: neutral sentence not targeting specific phonemes",
     ),
     TrialSentence(
-        text="My name is Yuki and I live in Tokyo.",
+        text="I have some tea in my room.",
         target_phonemes=(),
-        note="control sentence 2: neutral sentence not targeting specific phonemes",
+        note=(
+            "control sentence 2: neutral sentence not targeting specific "
+            "phonemes. Kept as a second control (not repurposed as a regular "
+            "elicitation item) -- both control sentences are the neutral "
+            "baseline for the L1 knowledge-base analysis, so getting this "
+            "one wrong would skew that baseline. No proper nouns (Whisper "
+            "mis-transcription risk) and no concentrated l/ɹ, th, or "
+            "vowel-length patterns beyond the incidental /ɹ/ in 'room' -- "
+            "same tolerance as control sentence 1's incidental /ð/,/ɹ/. "
+            "Former wording 'My name is Yuki and I live in Tokyo.' is kept "
+            "in RETIRED_PRESET_TEXTS for trial_log.jsonl analysis."
+        ),
     ),
 )
+
+
+def resolve_trial_sentence(target_text: str) -> TrialSentence | None:
+    """Map a logged or UI target_text to its TrialSentence.
+
+    Recognizes current TRIAL_SENTENCES texts and retired wordings listed in
+    RETIRED_PRESET_TEXTS (same role / metadata as the replacement sentence).
+    """
+    by_text = {s.text: s for s in TRIAL_SENTENCES}
+    if target_text in by_text:
+        return by_text[target_text]
+    current = RETIRED_PRESET_TEXTS.get(target_text)
+    if current is not None:
+        return by_text.get(current)
+    return None
+

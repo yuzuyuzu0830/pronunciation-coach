@@ -124,6 +124,15 @@ def test_prompt_instructs_word_level_guidance_for_misreads():
     assert "read it again" in prompt
 
 
+def test_prompt_hedges_misread_notice_as_possible_transcription_error():
+    """A misread flag can itself be a Whisper mis-transcription, not a real
+    reading mistake (observed in the P01 trial: 'weather' transcribed as
+    'river'). The instruction must not tell the model to treat it as fact."""
+    prompt = build_prompt(make_report(MISREAD_ERRORS))
+    assert "transcription" in prompt.lower()
+    assert "possibility" in prompt.lower() or "may " in prompt.lower()
+
+
 # --- prompt v2: strengthened instructions, selectable per version ---
 
 
@@ -354,6 +363,51 @@ def test_v3_prompt_with_only_facts_only_errors_forbids_describing_them():
     assert "There are exactly" not in prompt
     assert '"wordx"' not in prompt
     assert "Do not describe or guess" in prompt
+
+
+def test_v3_prompt_at_zero_m_drops_transcript_line():
+    """Regression test for the fabrication observed in the
+    2026-07-22 v3 llm-bypass confirmation run: with the transcript still in
+    the prompt, the model reconstructed a word-level paraphrase from it
+    ('zoo' said as 'sue') even though M=0 forbids describing specific
+    errors. Dropping the transcript line removes that raw material."""
+    only_unmatched = [PhonemeError("substitution", "x", "y", 0, "wordx")]
+    report = make_v3_report(only_unmatched)
+    prompt = build_prompt(report, version="v3")
+    assert report.transcript not in prompt
+    # The target sentence is not raw material for reconstructing the
+    # learner's actual errors, so it's still shown.
+    assert report.target_text in prompt
+
+
+def test_v3_prompt_at_zero_m_drops_misread_section_and_instruction_entirely():
+    """Same run also saw an empty 'Possible reading mistakes' heading
+    fabricated even though no such section was given -- the generic role
+    instruction ("if given, always address it") was apparently enough to
+    make the model invent one. At M=0, the misread section (data +
+    instruction) is dropped altogether rather than just its instruction:
+    the learner still sees it via the UI's Misread? column
+    (ui/interface.py), so no information is lost."""
+    errors = [PhonemeError("substitution", "x", "y", 0, "wordx")] + MISREAD_ERRORS
+    prompt = build_prompt(make_v3_report(errors), version="v3")
+    assert "Detected" in prompt and "0 explained in detail below." in prompt
+    # The dynamic section (header + this report's notices) is gone. The
+    # fixed role-instruction template still mentions the section generically
+    # ("if given, always address it") -- that shared string is untouched by
+    # this fix and is exercised by test_v2_structure_rule_is_scoped_to_the_numbered_list.
+    assert "Possible reading mistakes (a different word was read):" not in prompt
+    assert '"buy"' not in prompt
+    assert "check the target word and read it again" not in prompt
+
+
+def test_v3_prompt_keeps_transcript_and_misread_section_when_m_is_nonzero():
+    """Only the M=0 case is affected -- when at least one error is fully
+    explained, transcript and misread handling stay exactly as before."""
+    errors = V3_ERRORS + MISREAD_ERRORS
+    prompt = build_prompt(make_v3_report(errors), version="v3")
+    assert make_v3_report(errors).transcript in prompt
+    assert "Possible reading mistakes" in prompt
+    assert '"buy"' in prompt
 
 
 # --- facts-only template: deterministic, LLM-free rendering ---

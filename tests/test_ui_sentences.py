@@ -1,7 +1,11 @@
 import pytest
 
 from pronunciation_coach.g2p import normalize, to_phonemes_by_word
-from ui.sentences import TRIAL_SENTENCES
+from ui.sentences import (
+    RETIRED_PRESET_TEXTS,
+    TRIAL_SENTENCES,
+    resolve_trial_sentence,
+)
 
 try:
     from phonemizer.backend import EspeakBackend
@@ -20,6 +24,38 @@ def test_trial_sentences_list_is_non_empty():
 def test_trial_sentences_have_unique_text():
     texts = [s.text for s in TRIAL_SENTENCES]
     assert len(texts) == len(set(texts))
+
+
+def test_resolve_trial_sentence_finds_current_preset():
+    sentence = TRIAL_SENTENCES[0]
+    assert resolve_trial_sentence(sentence.text) is sentence
+
+
+def test_resolve_trial_sentence_maps_retired_control_2_to_current_control():
+    """P01 trial_log.jsonl still has the pre-rename control sentence 2 text.
+    Analysis that maps target_text -> TrialSentence must treat it as the
+    same control (empty target_phonemes), not as an unknown custom sentence.
+    """
+    old_text = "My name is Yuki and I live in Tokyo."
+    assert old_text in RETIRED_PRESET_TEXTS
+    resolved = resolve_trial_sentence(old_text)
+    assert resolved is not None
+    assert resolved.text == "I have some tea in my room."
+    assert resolved.target_phonemes == ()
+    assert "control sentence 2" in resolved.note
+
+
+def test_resolve_trial_sentence_returns_none_for_unknown_text():
+    assert resolve_trial_sentence("not a trial sentence") is None
+
+
+def test_retired_preset_targets_are_not_in_current_list():
+    """Retired texts must stay out of the UI dropdown (TRIAL_SENTENCES) while
+    still being resolvable for log analysis."""
+    current = {s.text for s in TRIAL_SENTENCES}
+    for old_text, new_text in RETIRED_PRESET_TEXTS.items():
+        assert old_text not in current
+        assert new_text in current
 
 
 @requires_espeak
