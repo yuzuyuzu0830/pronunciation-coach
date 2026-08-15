@@ -29,8 +29,19 @@ brew services start ollama
 # Or start only for the current session (must re-run after reboot):
 # ollama serve
 
+# The trial UI's model (ui/config.py); app.py refuses to start without it.
+ollama pull llama3.1:8b
+# Only needed for smoke_test_llm.py and the model-comparison experiments,
+# which use explainer.py's own default.
 ollama pull llama3.2:3b
 ```
+
+## Trial UI
+
+```bash
+python app.py
+```
+
 ## Smoke tests
 
 ```bash
