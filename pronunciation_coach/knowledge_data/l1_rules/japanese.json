@@ -8,7 +8,7 @@
       {"word": "this", "target_phoneme": "ð"},
       {"word": "that", "target_phoneme": "ð"}
     ],
-    "citation": "Swan & Smith (2001) Learner English, ch. Japanese; Shahin et al. (2025) Table 5 (d/dh confusion in L2-ARCTIC)"
+    "citation": "Ohata (2004) Asian EFL Journal 6(4), pp. 1-19 (dental fricatives absent from the Japanese consonant inventory)"
   },
   {
     "id": "th_sibilant_substitution",
@@ -19,7 +19,7 @@
       {"word": "think", "target_phoneme": "θ"},
       {"word": "three", "target_phoneme": "θ"}
     ],
-    "citation": "Swan & Smith (2001) Learner English, ch. Japanese; Shahin et al. (2025) Table 5 (s/th confusion in L2-ARCTIC)"
+    "citation": "Ohata (2004) Asian EFL Journal 6(4), pp. 1-19 (dental fricatives absent from the Japanese consonant inventory)"
   },
   {
     "id": "liquid_confusion",
@@ -30,7 +30,7 @@
       {"word": "light", "target_phoneme": "l"},
       {"word": "right", "target_phoneme": "ɹ"}
     ],
-    "citation": "Goto (1971) Neuropsychologia 9(3); Bradlow et al. (1997) JASA; Swan & Smith (2001) ch. Japanese"
+    "citation": "Miyawaki et al. (1975) Perception & Psychophysics 18(5), pp. 331-340; Aoyama et al. (2004) Journal of Phonetics 32(2), pp. 233-250 (the two-to-one mapping is asymmetric; this record is deliberately bidirectional -- see docs/design_3c.md)"
   },
   {
     "id": "si_palatalization",
@@ -41,7 +41,7 @@
       {"word": "see", "target_phoneme": "s"},
       {"word": "sit", "target_phoneme": "s"}
     ],
-    "citation": "Swan & Smith (2001) ch. Japanese; Ohata (2004) Asian EFL Journal 6(4)"
+    "citation": "Ohata (2004) Asian EFL Journal 6(4), pp. 1-19 (/s, z, t, d/ realised as [ʃ, ʒ, ʧ, ʤ] before high vowels)"
   },
   {
     "id": "vowel_epenthesis",
@@ -52,7 +52,7 @@
       {"word": "desk", "target_phoneme": "k"},
       {"word": "bag", "target_phoneme": "ɡ"}
     ],
-    "citation": "Dupoux et al. (1999) JEP:HPP 25(6); Swan & Smith (2001) ch. Japanese"
+    "citation": "Dupoux et al. (1999) Journal of Experimental Psychology: HPP 25(6), pp. 1568-1578 (epenthetic vowel is specifically [u]; this record matches any inserted vowel); Ohata (2004) Asian EFL Journal 6(4), pp. 1-19 (CV syllable structure)"
   },
   {
     "id": "vowel_length_mismatch",
@@ -63,6 +63,6 @@
       {"word": "food", "target_phoneme": "uː"},
       {"word": "beat", "target_phoneme": "iː"}
     ],
-    "citation": "Swan & Smith (2001) ch. Japanese; Ohata (2004)"
+    "citation": "Dupoux et al. (1999) Journal of Experimental Psychology: HPP 25(6), pp. 1568-1578 (phonemic vowel length in Japanese); Ohata (2004) Asian EFL Journal 6(4), pp. 1-19 (five-vowel system with no tense-lax distinction)"
   }
 ]
