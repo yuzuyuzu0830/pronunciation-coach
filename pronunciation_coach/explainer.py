@@ -165,12 +165,38 @@ def format_facts_only_error(error: PhonemeError) -> str:
     return f"{location}, an extra /{error.actual}/ was added."
 
 
-def render_facts_only_section(errors: list[PhonemeError]) -> str:
+FACTS_ONLY_HEADING = "Other detected differences:"
+
+# At M=0 the block is the whole output, so "Other" has nothing to contrast
+# with; only that call site overrides the heading.
+ZERO_M_HEADING = "Detected differences:"
+
+# Opening lines of the M=0 output. Deterministic template, never generated:
+# skipping the LLM (2026-08-23) removed the encouragement sentence it used
+# to produce, and reinstating praise would misrepresent the result. The
+# system's detection precision is 0.069, so "nothing left to explain" is not
+# evidence that the learner pronounced anything correctly -- the text states
+# what was and was not found, and nothing about how well the learner did.
+ZERO_M_PREAMBLE = (
+    "Differences were detected, and none of them matched a known "
+    "pronunciation pattern.\n"
+    "There is no detailed explanation for them, so the list below is "
+    "reference information."
+)
+
+
+def render_facts_only_section(
+    errors: list[PhonemeError], *, heading: str = FACTS_ONLY_HEADING
+) -> str:
     """Render the facts-only errors as the section appended after the LLM
-    output. Empty input renders nothing (no dangling heading)."""
+    output. Empty input renders nothing (no dangling heading).
+
+    heading is keyword-only and defaults to the section's original wording,
+    so the M>0 call site is unaffected by the M=0 override.
+    """
     if not errors:
         return ""
-    lines = ["Other detected differences:"]
+    lines = [heading]
     lines.extend(f"- {format_facts_only_error(error)}" for error in errors)
     return "\n".join(lines)
 
@@ -297,6 +323,35 @@ def _is_zero_m(
     return not full_pairs
 
 
+def _should_skip_llm(
+    report: DiagnosisReport,
+    version: str,
+    full_explanation_limit: int,
+) -> bool:
+    """True when the prompt would leave the LLM nothing to say.
+
+    At M=0 build_prompt already withholds every error detail, the
+    transcript and the misread section, so the only thing left to generate
+    is an encouragement sentence -- while the role instruction's generic
+    rules ("one numbered item per error", "always address the reading
+    mistakes section") stay in the prompt and invite output that the input
+    does not support. The 2026-08-23 E2 (N=10) run measured exactly that on
+    simple_no_match x v3: phantom numbered items in 9/10 trials, an
+    invented bracketed transcription in 1/10, and empty or unsupported
+    reading-mistake sections in 7/10. The deterministic facts-only block
+    from the same run showed no such additions (0/50 items), so the fix is
+    to let that block stand alone rather than to add another prompt rule.
+
+    A misread is exempt: it still needs word-level coaching, so the call is
+    kept. Without one, every error in the report is a pronunciation error,
+    which is what _is_zero_m expects.
+    """
+    _require_non_negative_limit(full_explanation_limit)
+    if any(error.possibly_misread for error in report.errors):
+        return False
+    return _is_zero_m(version == "v3", report.errors, report, full_explanation_limit)
+
+
 def build_prompt(
     report: DiagnosisReport,
     version: str = DEFAULT_PROMPT_VERSION,
@@ -405,6 +460,15 @@ class OllamaExplainer:
         self._full_explanation_limit = full_explanation_limit
 
     def explain(self, report: DiagnosisReport) -> str:
+        if _should_skip_llm(report, self._prompt_version, self._full_explanation_limit):
+            # M=0 with no misread: the preamble and the facts-only section
+            # are the entire learner-facing output. The section is always
+            # non-empty here (M=0 means every detected error fell through to
+            # facts-only), so the preamble never introduces an empty list.
+            return ZERO_M_PREAMBLE + "\n\n" + render_facts_only_section(
+                _facts_only_errors(report, self._full_explanation_limit),
+                heading=ZERO_M_HEADING,
+            )
         prompt = build_prompt(
             report,
             version=self._prompt_version,

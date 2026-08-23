@@ -1,6 +1,10 @@
+import re
+
 import pytest
 
 from pronunciation_coach.explainer import (
+    ZERO_M_HEADING,
+    ZERO_M_PREAMBLE,
     OllamaExplainer,
     build_prompt,
     format_facts_only_error,
@@ -455,17 +459,24 @@ def test_render_facts_only_section_is_empty_without_errors():
 
 
 class _FakeOllamaResponse:
+    def __init__(self, text: str = "LLM TEXT") -> None:
+        self._text = text
+
     def raise_for_status(self):
         pass
 
     def json(self):
-        return {"response": "LLM TEXT"}
+        return {"response": self._text}
 
 
-def _fake_ollama(monkeypatch, captured):
+def _fake_ollama(monkeypatch, captured, response="LLM TEXT"):
+    """Install a fake Ollama endpoint and count the calls made to it."""
+    captured["calls"] = 0
+
     def fake_post(url, json=None, timeout=None):
+        captured["calls"] += 1
         captured["prompt"] = json["prompt"]
-        return _FakeOllamaResponse()
+        return _FakeOllamaResponse(response)
 
     monkeypatch.setattr(
         "pronunciation_coach.explainer.requests.post", fake_post
@@ -507,3 +518,244 @@ def test_v3_misread_section_keeps_v2_word_level_notice_format():
     assert "read as" in prompt
     assert "do not explain individual sounds" in prompt.lower()
     assert "/b/" not in prompt
+
+
+# --- explain(): the LLM is skipped entirely at M=0 with no misread ---
+#
+# The 2026-08-23 E2 (N=10) run showed that at M=0 the call was still made
+# purely for an encouragement sentence, and the surviving role-instruction
+# template leaked numbered items (9/10 trials), an invented bracketed
+# transcription (1/10) and empty reading-mistake sections (7/10) into the
+# learner-facing output. With nothing to rephrase and no misread to report,
+# there is nothing for the LLM to do, so it is not called at all.
+
+
+ZERO_M_ERRORS = [PhonemeError("substitution", "x", "y", 0, "wordx")]
+
+# Shape of the leakage actually observed in the 2026-08-23 run: a phantom
+# numbered item and a reading-mistake section, neither backed by the input.
+_LEAKY_RESPONSE = (
+    "Great effort!\n\n"
+    "1. In the word \"zoo\", you said [a zo].\n\n"
+    "Possible reading mistakes:\n"
+)
+
+
+def test_v3_explain_does_not_call_the_llm_at_zero_m_without_misreads(monkeypatch):
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3")
+    explainer.explain(make_v3_report(ZERO_M_ERRORS))
+    assert captured["calls"] == 0
+
+
+def test_v3_explain_at_zero_m_returns_the_preamble_and_the_facts_only_section(
+    monkeypatch,
+):
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3")
+    out = explainer.explain(make_v3_report(ZERO_M_ERRORS))
+    expected = ZERO_M_PREAMBLE + "\n\n" + render_facts_only_section(
+        ZERO_M_ERRORS, heading=ZERO_M_HEADING
+    )
+    assert out == expected
+    assert "LLM TEXT" not in out
+
+
+def test_v3_explain_at_zero_m_keeps_the_deterministic_facts_only_block(monkeypatch):
+    """The deterministic block is unchanged by the skip: it is still the
+    same rendering that used to be appended after the LLM output."""
+    captured = {}
+    _fake_ollama(monkeypatch, captured, response=_LEAKY_RESPONSE)
+    explainer = OllamaExplainer(prompt_version="v3")
+    out = explainer.explain(make_v3_report(ZERO_M_ERRORS))
+    assert ZERO_M_HEADING in out
+    assert '- In the word "wordx", expected /x/ but heard /y/.' in out
+
+
+def test_v3_explain_at_zero_m_output_has_no_numbered_items_or_misread_section(
+    monkeypatch,
+):
+    captured = {}
+    _fake_ollama(monkeypatch, captured, response=_LEAKY_RESPONSE)
+    explainer = OllamaExplainer(prompt_version="v3")
+    out = explainer.explain(make_v3_report(ZERO_M_ERRORS))
+    assert not re.search(r"(?m)^\s*\d+[.)]\s", out)
+    assert "reading mistake" not in out.lower()
+
+
+def test_v3_explain_calls_the_llm_at_zero_m_when_a_misread_is_present(monkeypatch):
+    """A misread still needs word-level coaching, so the call stays."""
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3")
+    out = explainer.explain(make_v3_report(ZERO_M_ERRORS + MISREAD_ERRORS))
+    assert captured["calls"] == 1
+    assert out.startswith("LLM TEXT")
+
+
+def test_v3_explain_still_calls_the_llm_when_m_is_nonzero(monkeypatch):
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3")
+    explainer.explain(make_v3_report(V3_ERRORS))
+    assert captured["calls"] == 1
+
+
+def test_v3_explain_still_calls_the_llm_when_no_error_was_detected(monkeypatch):
+    """No errors at all is not M=0: there is no facts-only material to show,
+    and the prompt asks for praise, so the call must stay."""
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3")
+    out = explainer.explain(make_v3_report([]))
+    assert captured["calls"] == 1
+    assert out == "LLM TEXT"
+
+
+def test_v2_explain_still_calls_the_llm_at_zero_m(monkeypatch):
+    """The skip is v3-only: v2 has no knowledge tiering, so M=0 does not
+    exist for it and its measured behaviour must not move."""
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v2")
+    out = explainer.explain(make_v3_report(ZERO_M_ERRORS))
+    assert captured["calls"] == 1
+    assert out == "LLM TEXT"
+
+
+def test_v1_explain_still_calls_the_llm_at_zero_m(monkeypatch):
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v1")
+    explainer.explain(make_v3_report(ZERO_M_ERRORS))
+    assert captured["calls"] == 1
+
+
+def test_v3_explain_skips_the_llm_when_the_limit_leaves_nothing_to_explain(
+    monkeypatch,
+):
+    """full_explanation_limit=0 leaves zero items to explain, which is the
+    same condition build_prompt already treats as M=0, so the skip applies
+    there too."""
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3", full_explanation_limit=0)
+    out = explainer.explain(make_v3_report(V3_ERRORS))
+    assert captured["calls"] == 0
+    assert out.startswith(ZERO_M_PREAMBLE)
+    assert ZERO_M_HEADING in out
+    assert out.count("\n- ") == len(V3_ERRORS)
+
+
+# --- explain(): deterministic preamble on the M=0 skip path ---
+#
+# Skipping the LLM (2026-08-23) removed the encouragement sentence that used
+# to open the M=0 output, leaving the learner with a bare heading and a list
+# of phoneme differences. The replacement is a fixed template, not generated
+# text: detection precision is 0.069, so an absence of explainable errors is
+# not evidence of correct pronunciation and must not be phrased as praise.
+
+
+def test_zero_m_preamble_states_the_facts_without_praising(monkeypatch):
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3")
+    out = explainer.explain(make_v3_report(ZERO_M_ERRORS))
+    assert out.startswith(ZERO_M_PREAMBLE)
+    assert "Differences were detected" in out
+    assert "none of them matched a known pronunciation pattern" in out
+    assert "reference information" in out
+
+
+def test_zero_m_preamble_avoids_evaluative_language():
+    """Guards the wording requirement itself, not just its current text."""
+    lowered = ZERO_M_PREAMBLE.lower()
+    for banned in (
+        "well done",
+        "good job",
+        "great",
+        "nice",
+        "correct",
+        "accurate",
+        "improv",
+        "progress",
+        "keep practicing",
+        "keep practising",
+    ):
+        assert banned not in lowered
+    assert "!" not in ZERO_M_PREAMBLE
+    assert ZERO_M_PREAMBLE.isascii()
+
+
+def test_zero_m_output_is_byte_identical_across_calls(monkeypatch):
+    """No LLM, so the whole output must be reproducible byte for byte."""
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3")
+    report = make_v3_report(ZERO_M_ERRORS)
+    outs = [explainer.explain(report) for _ in range(5)]
+    assert len(set(outs)) == 1
+    assert captured["calls"] == 0
+
+
+def test_zero_m_output_layout_is_preamble_blank_line_then_the_list(monkeypatch):
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3")
+    out = explainer.explain(make_v3_report(ZERO_M_ERRORS))
+    assert out.split("\n\n") == [
+        ZERO_M_PREAMBLE,
+        render_facts_only_section(ZERO_M_ERRORS, heading=ZERO_M_HEADING),
+    ]
+
+
+def test_zero_m_heading_drops_the_other_prefix(monkeypatch):
+    """At M=0 the block is the only content, so "Other" has nothing to
+    contrast with."""
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3")
+    out = explainer.explain(make_v3_report(ZERO_M_ERRORS))
+    assert ZERO_M_HEADING == "Detected differences:"
+    assert "Other detected differences:" not in out
+
+
+def test_nonzero_m_output_has_no_preamble_and_keeps_the_other_heading(monkeypatch):
+    """M>0 is untouched: LLM text first, then the original heading."""
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3")
+    out = explainer.explain(make_v3_report(V3_ERRORS))
+    assert captured["calls"] == 1
+    assert ZERO_M_PREAMBLE not in out
+    assert "Differences were detected" not in out
+    assert out == "LLM TEXT\n\nOther detected differences:\n" + (
+        '- In the word "wordx", expected /x/ but heard /y/.'
+    )
+
+
+def test_nonzero_m_v2_output_has_no_preamble(monkeypatch):
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v2")
+    out = explainer.explain(make_v3_report(V3_ERRORS))
+    assert out == "LLM TEXT"
+
+
+def test_render_facts_only_section_keeps_its_original_heading_by_default():
+    """The M>0 call site passes no heading, so its output cannot move."""
+    section = render_facts_only_section(ZERO_M_ERRORS)
+    assert section.startswith("Other detected differences:")
+
+
+def test_render_facts_only_section_heading_override_only_changes_the_heading():
+    default = render_facts_only_section(ZERO_M_ERRORS)
+    overridden = render_facts_only_section(ZERO_M_ERRORS, heading="Detected differences:")
+    assert default.split("\n")[1:] == overridden.split("\n")[1:]
+    assert overridden.split("\n")[0] == "Detected differences:"
+
+
+def test_render_facts_only_section_heading_override_still_renders_nothing_when_empty():
+    assert render_facts_only_section([], heading="Detected differences:") == ""
