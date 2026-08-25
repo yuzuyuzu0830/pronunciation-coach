@@ -1,10 +1,7 @@
-"""Trial target-sentence list (docs/design_ui.md §6).
+"""Fixed target sentences for the pronunciation trial.
 
-Provisional list -- the final wording is confirmed by the trial plan before
-the August session; this list only needs to (a) cover the difficulty
-patterns the L1 knowledge base targets and (b) actually phonemize (verified
-by tests/test_ui_sentences.py against the real g2p pipeline, the same way
-practice_words are verified in pronunciation_coach/knowledge_data).
+Tests verify that each sentence survives the production G2P path and contains
+its annotated target phonemes.
 """
 
 from __future__ import annotations
@@ -19,10 +16,7 @@ class TrialSentence:
     note: str  # for the trial script/moderator
 
 
-# Retired preset wordings that still appear in results/trial_logs/trial_log.jsonl
-# (e.g. P01). Maps old target_text -> the current TRIAL_SENTENCES text that
-# replaced it, so analysis that resolves logged target_text back to a
-# TrialSentence (control vs elicitation, target_phonemes, …) still works.
+# Map retired logged targets to their current sentence metadata for analysis.
 RETIRED_PRESET_TEXTS: dict[str, str] = {
     "My name is Yuki and I live in Tokyo.": "I have some tea in my room.",
 }
@@ -69,31 +63,18 @@ TRIAL_SENTENCES: tuple[TrialSentence, ...] = (
         target_phonemes=(),
         note="control sentence 1: neutral sentence not targeting specific phonemes",
     ),
+    # Keep both controls as neutral baselines; the retired wording remains
+    # resolvable through RETIRED_PRESET_TEXTS for earlier trial logs.
     TrialSentence(
         text="I have some tea in my room.",
         target_phonemes=(),
-        note=(
-            "control sentence 2: neutral sentence not targeting specific "
-            "phonemes. Kept as a second control (not repurposed as a regular "
-            "elicitation item) -- both control sentences are the neutral "
-            "baseline for the L1 knowledge-base analysis, so getting this "
-            "one wrong would skew that baseline. No proper nouns (Whisper "
-            "mis-transcription risk) and no concentrated l/ɹ, th, or "
-            "vowel-length patterns beyond the incidental /ɹ/ in 'room' -- "
-            "same tolerance as control sentence 1's incidental /ð/,/ɹ/. "
-            "Former wording 'My name is Yuki and I live in Tokyo.' is kept "
-            "in RETIRED_PRESET_TEXTS for trial_log.jsonl analysis."
-        ),
+        note="control sentence 2: neutral baseline with incidental /ɹ/ in 'room'",
     ),
 )
 
 
 def resolve_trial_sentence(target_text: str) -> TrialSentence | None:
-    """Map a logged or UI target_text to its TrialSentence.
-
-    Recognizes current TRIAL_SENTENCES texts and retired wordings listed in
-    RETIRED_PRESET_TEXTS (same role / metadata as the replacement sentence).
-    """
+    """Resolve current or retired target text to its sentence metadata."""
     by_text = {s.text: s for s in TRIAL_SENTENCES}
     if target_text in by_text:
         return by_text[target_text]
@@ -101,4 +82,3 @@ def resolve_trial_sentence(target_text: str) -> TrialSentence | None:
     if current is not None:
         return by_text.get(current)
     return None
-

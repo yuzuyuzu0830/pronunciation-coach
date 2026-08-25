@@ -1,9 +1,8 @@
 """Compare explanation quality across model × prompt-version combinations.
 
 Runs every combination against fixed DiagnosisReport fixtures
-(tests/fixtures/*.json) and writes the explanations, together with the input
-conditions, to docs/experiments/explanations_<date>.md for side-by-side
-review. Requires a running Ollama server with the requested models pulled.
+(tests/fixtures/*.json) and writes the explanations, together with the input conditions,
+for side-by-side review. Requires a running Ollama server with the requested models pulled.
 """
 
 import argparse
@@ -30,6 +29,7 @@ OUTPUT_DIR = REPO_ROOT / "docs" / "experiments"
 
 
 def load_report(path: Path) -> DiagnosisReport:
+    """Load a fixture, discarding its human-only comment field."""
     data = json.loads(path.read_text())
     data.pop("_comment", None)
     errors = [PhonemeError(**e) for e in data.pop("errors")]
@@ -37,9 +37,10 @@ def load_report(path: Path) -> DiagnosisReport:
 
 
 def _error_tier(error: PhonemeError, report: DiagnosisReport) -> str:
-    """Tier label for the comparison log (docs/design_3c.md §6): misread
-    errors never go through knowledge matching, so they get their own label
-    rather than a misleading "none"."""
+    """Return the knowledge tier shown in the comparison log.
+
+    Misread errors bypass knowledge matching and use a separate label.
+    """
     if error.possibly_misread:
         return "n/a (misread)"
     record = match_knowledge(error, report.reference_phonemes, report.learner_l1)
@@ -47,6 +48,7 @@ def _error_tier(error: PhonemeError, report: DiagnosisReport) -> str:
 
 
 def format_conditions(name: str, report: DiagnosisReport) -> list[str]:
+    """Render the fixed comparison input and each error's knowledge tier."""
     lines = [
         f"## Fixture: {name}",
         "",
@@ -110,11 +112,12 @@ def main() -> None:
         "",
         f"- Model: {', '.join(args.model)}",
         f"- Prompt: {', '.join(args.prompt_version)}",
-        "- Generation parameters: Ollama defaults (temperature is fixed so the text varies on re-runs)",
+        "- Generation parameters: Ollama defaults (sampling is not fixed, so text may vary on re-runs)",
         "",
     ]
 
     for fixture_name in args.fixture:
+        # Reuse one report across every model/prompt combination for a fair comparison.
         fixture_path = FIXTURES_DIR / f"{fixture_name}.json"
         report = load_report(fixture_path)
         lines.extend(format_conditions(fixture_name, report))
@@ -123,6 +126,7 @@ def main() -> None:
             for version in args.prompt_version:
                 print(f"[{fixture_name}] {model} × {version} ...", flush=True)
                 explainer = OllamaExplainer(model=model, prompt_version=version)
+                # Record generation latency alongside each explanation.
                 started = time.perf_counter()
                 explanation = explainer.explain(report)
                 elapsed = time.perf_counter() - started
