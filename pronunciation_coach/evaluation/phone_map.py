@@ -1,14 +1,8 @@
-"""ARPAbet (speechocean762 ground truth) <-> espeak IPA (system reference)
-position mapping, for evaluation only (docs/design_eval.md §2).
+"""Map SpeechOcean762 ARPAbet positions to the system's espeak IPA reference.
 
-This is NOT g2p.EQUIVALENCE_CLASSES: that table canonicalizes notation
-variants the detector must never treat as a learner error (dh/d must stay
-distinguishable). Here both sides are always the *canonical* pronunciation
-of the same target text (ground truth vs. this system's espeak reference),
-so the acceptance criterion is broader by design: "same underlying phoneme,
-different transcription convention" (e.g. flapped /t/, schwa vs. stressed
-vowel). Provisional first pass; to be corrected against real corpus/espeak
-samples during data acquisition (§7).
+Unlike `g2p.EQUIVALENCE_CLASSES`, this evaluation-only mapping accepts
+canonical-pronunciation differences between transcription systems. The table
+is provisional pending validation against corpus samples.
 """
 
 from __future__ import annotations
@@ -17,9 +11,7 @@ from dataclasses import dataclass
 
 from pronunciation_coach.aligner import align_phonemes
 
-# Bare ARPAbet phone (stress digit stripped) -> espeak IPA symbols accepted
-# as the same underlying phoneme when aligning ground-truth canonical phones
-# against this system's espeak reference.
+# Bare ARPAbet phone to equivalent espeak IPA symbols for reference alignment.
 ACCEPTED_ESPEAK: dict[str, frozenset[str]] = {
     # Consonants
     "B": frozenset({"b"}),
@@ -68,10 +60,8 @@ _ARPABET_VOWELS = frozenset(
     {"AA", "AE", "AH", "AO", "AW", "AY", "EH", "ER", "EY", "IH", "IY", "OW", "OY", "UH", "UW"}
 )
 
-# espeak vowel inventory for the coarse-class DP fallback below. Kept
-# independent of knowledge.py's _VOWELS (different purpose: alignment-cost
-# fallback here, not ANY_VOWEL matching there) but should stay in sync if
-# espeak's vowel set changes.
+# Used only by the broad-class alignment fallback. This remains separate from
+# knowledge._VOWELS but must track changes to the espeak vowel inventory.
 ESPEAK_VOWELS = frozenset(
     {
         "i", "iː", "ɪ", "e", "ɛ", "æ", "ɑ", "ɑː", "ɒ", "ɔ", "ɔː",
@@ -90,12 +80,10 @@ def strip_stress(phone: str) -> str:
 
 
 def equivalence_cost(gt_phone: str, espeak_phone: str) -> float:
-    """DP substitution cost for aligning ground-truth ARPAbet against espeak IPA.
+    """Return the substitution cost for ARPAbet-to-espeak alignment.
 
-    Three tiers (§2.2): an accepted transcription-convention pair costs
-    nothing; phones from the same broad vowel/consonant class cost 0.5 so an
-    unrecognized pair still aligns diagonally instead of fragmenting into a
-    deletion+insertion pair; anything else costs 1.
+    Equivalent pairs cost 0, phones in the same broad class cost 0.5 to favor
+    diagonal alignment, and unrelated phones cost 1.
     """
     bare = strip_stress(gt_phone)
     if espeak_phone in ACCEPTED_ESPEAK.get(bare, frozenset()):
@@ -109,22 +97,17 @@ def equivalence_cost(gt_phone: str, espeak_phone: str) -> float:
 
 @dataclass(frozen=True)
 class WordPositionMap:
-    # index i -> local index into `reference_phones` for gt_phones[i], or None
-    # when no reference phone could be paired with it (§2.3 coverage loss).
+    # Reference index for each ground-truth phone; None marks coverage loss.
     gt_to_reference: list[int | None]
-    # local indices into `reference_phones` with no ground-truth counterpart
-    # (informational: the espeak reference's own "insertion" relative to
-    # ground truth, not the learner's — e.g. an epenthetic schwa espeak adds
-    # that the corpus doesn't transcribe as a separate phone).
+    # Reference phones with no ground-truth counterpart, unrelated to learner errors.
     unmapped_reference_indices: list[int]
 
 
 def map_word_positions(gt_phones: list[str], reference_phones: list[str]) -> WordPositionMap:
-    """Align one word's ground-truth ARPAbet phones to this system's espeak reference.
+    """Map one word's ground-truth phones to the espeak reference.
 
-    Reuses the detection DP (aligner.align_phonemes) with the
-    evaluation-only equivalence_cost, so the tie-break rules (substitution >
-    deletion > insertion) match the production alignment exactly.
+    Reusing the production aligner preserves its substitution, deletion, and
+    insertion tie-break order while applying the evaluation-only cost.
     """
     ops = align_phonemes(gt_phones, reference_phones, substitution_cost=equivalence_cost)
 
@@ -137,7 +120,7 @@ def map_word_positions(gt_phones: list[str], reference_phones: list[str]) -> Wor
             ref_i += 1
         elif op.op == "deletion":
             gt_to_reference.append(None)
-        else:  # insertion: reference phone with no ground-truth counterpart
+        else:  # Reference insertion, not a learner insertion.
             unmapped_reference_indices.append(ref_i)
             ref_i += 1
     return WordPositionMap(gt_to_reference, unmapped_reference_indices)

@@ -1,9 +1,7 @@
-"""Grapheme-to-phoneme conversion and phoneme normalization.
+"""Grapheme-to-phoneme conversion and normalization.
 
-Reference (phonemizer/espeak-ng) and hypothesis (wav2vec2-espeak) phonemes
-share the espeak IPA inventory but differ in stress marking; both sequences
-must pass through the same normalize() before alignment (docs/design.md §4).
-The length mark ː is kept so vowel-length errors stay detectable.
+Reference and hypothesis phonemes must use the same normalization before
+alignment. The length mark ː is preserved.
 """
 
 from __future__ import annotations
@@ -15,18 +13,12 @@ from phonemizer.separator import Separator
 
 STRESS_MARKS = frozenset("ˈˌ")
 
-# Notation variants that espeak/wav2vec2-espeak use interchangeably for the
-# same sound, mapped to one canonical symbol. Inclusion criterion: only pairs
-# that are phonetically identical in en-us — i.e. no minimal pair exists and
-# a learner could never be wrong by producing one instead of the other. Never
-# add contrasts we want to detect as learner errors (e.g. ð/d, l/ɹ, s/θ).
-# Extend this table as new variants are observed in E2E runs.
+# Only canonicalize notation variants that are phonetically identical in en-us.
+# Learner contrasts such as ð/d, l/ɹ, and s/θ must remain detectable.
 EQUIVALENCE_CLASSES = {
-    # Alveolar approximant: espeak prints "r" or "ɹ" for the same English /r/
-    # (measured: hypothesis flips between them); IPA-strict form ɹ is canonical.
+    # espeak uses both symbols for English /r/.
     "r": "ɹ",
-    # R-colored vowel: en-us "church"/"water" vowel appears as ɜː or ɚ
-    # depending on stress context, but is one phoneme for en-us; ɚ is canonical.
+    # The en-us r-colored vowel varies with stress context.
     "ɜː": "ɚ",
 }
 
@@ -47,25 +39,17 @@ def _get_espeak_backend() -> EspeakBackend:
 
 
 def reset_espeak_backend_for_tests() -> None:
-    """Drop the cached backend so tests can assert (re)initialization."""
     global _espeak_backend
     _espeak_backend = None
 
 
 def normalize(phonemes: list[str]) -> list[str]:
-    """Strip stress marks and map equivalence-class variants to canonical form.
-
-    Must be applied to BOTH the reference (phonemizer) and hypothesis
-    (wav2vec2-espeak) sequences before alignment: the two sources pick
-    different members of EQUIVALENCE_CLASSES, and an unnormalized side would
-    turn notation variance into false substitutions.
-    """
+    """Remove stress marks and canonicalize equivalent notation."""
     stripped = ("".join(ch for ch in p if ch not in STRESS_MARKS) for p in phonemes)
     return [EQUIVALENCE_CLASSES.get(p, p) for p in stripped if p]
 
 
 def _phonemize_raw(texts: list[str]) -> list[str]:
-    """Phonemize many texts with a single espeak backend instance."""
     if not texts:
         return []
     return _get_espeak_backend().phonemize(
@@ -83,14 +67,9 @@ def _words_from_text(text: str) -> list[str]:
 
 
 def _phonemize_words_individually(words: list[str]) -> list[list[str]]:
-    """Phonemize each word as its own call, guaranteeing one group per word.
+    """Guarantee one phoneme group per word when espeak drops separators.
 
-    Fallback for when a single batched phonemize call merges words together:
-    espeak-ng sometimes drops the '|' word separator for short function-word
-    sequences ("did not" / "there was" / "not a farmer" -> one merged group
-    instead of two; measured on ~17% of speechocean762 utterances, confirmed
-    against the real corpus 2026-07-22 -- see docs/devlog.md). Phonemizing
-    one word at a time forces a boundary between every pair.
+    This occurred in about 17% of tested SpeechOcean762 utterances.
     """
     raw = _phonemize_raw(words)
     groups: list[list[str]] = []
@@ -111,10 +90,7 @@ def _phonemize_words_individually(words: list[str]) -> list[list[str]]:
 def _pair_words_with_groups(
     text: str, phoneme_groups: list[list[str]]
 ) -> list[tuple[str, list[str]]]:
-    """Pair words with phoneme groups, falling back to per-word phonemization
-    on a count mismatch (see _phonemize_words_individually). Raises
-    ValueError only when that fallback also can't produce one group per word.
-    """
+    """Pair words with groups, retrying per word when their counts differ."""
     words = _words_from_text(text)
     if len(words) != len(phoneme_groups):
         phoneme_groups = _phonemize_words_individually(words)
@@ -139,7 +115,7 @@ def to_phonemes_by_word_many(
 ) -> list[list[tuple[str, list[str]]] | ValueError]:
     """Batch-phonemize texts (one espeak init), pairing each with its words.
 
-    Backend failures (RuntimeError/OSError) propagate. Per-text word/group
+    Backend failures propagate. Per-text word/group
     count mismatches are returned as ValueError entries so callers can skip
     one utterance without aborting the rest.
     """

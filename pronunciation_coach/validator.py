@@ -2,7 +2,7 @@
 
 The threshold is deliberately lenient (default 0.5): mispronunciations
 themselves distort the transcript, so this gate only rejects wrong-sentence
-reads and recording failures, not pronunciation errors (docs/design.md §6).
+reads and recording failures, not pronunciation errors.
 """
 
 from __future__ import annotations
@@ -14,16 +14,9 @@ from pronunciation_coach.types import ReadingValidation
 
 DEFAULT_WER_THRESHOLD = 0.5
 
-# Whisper sometimes transcribes a spoken number as digits ("three" -> "3"),
-# which the un-normalized target text never does, producing a false
-# word-mismatch / inflated WER for a correctly-read word (observed in UI
-# E2E testing, 2026-07-24: a participant reading "three" correctly got
-# flagged as a possible misread because the transcript said "3").
-# Deliberately limited to plain cardinals 0-20 and the bare tens 30-100:
-# ordinals ("3rd") and compounds ("twenty-three") are NOT covered -- they
-# don't match these dict keys and pass through unchanged. Trial sentences
-# should avoid them (docs/design_ui.md); this table isn't a general
-# number-to-words converter.
+# Whisper may transcribe spoken numbers as digits, which would inflate WER.
+# Trial sentences only require cardinals 0-20 and bare tens up to 100,
+# so ordinals and compound numbers remain unchanged.
 _NUMBER_WORDS: dict[str, str] = {
     "0": "zero", "1": "one", "2": "two", "3": "three", "4": "four",
     "5": "five", "6": "six", "7": "seven", "8": "eight", "9": "nine",
@@ -36,11 +29,7 @@ _NUMBER_WORDS: dict[str, str] = {
 
 
 def normalize_word(token: str) -> str:
-    """Normalize one token the same way validate_reading keys word_mismatches.
-
-    Lowercase, strip punctuation, map bare digit cardinals via _NUMBER_WORDS.
-    Empty after stripping returns "" (callers that build word lists filter it).
-    """
+    """Normalize a token for transcript comparison."""
     stripped = token.strip(string.punctuation).lower()
     if not stripped:
         return ""

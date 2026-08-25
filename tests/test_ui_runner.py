@@ -264,6 +264,29 @@ def test_log_write_failure_still_returns_final_trial_state(tmp_path, monkeypatch
     assert states[-1].log_error == "disk full"
 
 
+def test_audio_copy_failure_is_recorded_without_hiding_trial_outcome(
+    tmp_path, monkeypatch
+):
+    import ui.runner as runner_module
+
+    def fail_copy(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(runner_module, "copy_trial_audio", fail_copy)
+
+    pipeline = make_pipeline("this", ["ð", "ɪ", "s"])
+    states = run_and_collect(pipeline, tmp_path)
+
+    assert states[-1].stage == "done"
+    assert states[-1].logged is True
+    assert states[-1].error_detail == "audio copy failed: disk full"
+
+    logs = read_log(tmp_path)
+    assert logs[-1]["outcome"] == "ok"
+    assert logs[-1]["audio_file"] is None
+    assert logs[-1]["error_detail"] == "audio copy failed: disk full"
+
+
 # --- app_session_id / config pass-through ---
 
 

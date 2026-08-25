@@ -1,9 +1,8 @@
-"""One trial's execution: pre-checks -> detection -> explanation -> log
-(docs/design_ui.md §1/§3/§4/§5, Phase 1 -- staged display, no streaming).
+"""One trial's execution: pre-checks -> detection -> explanation -> log.
 
 run_trial is a generator so the caller (ui/interface.py) can update the UI
-as each stage completes instead of blocking silently for ~30s on the
-explainer. It is deliberately decoupled from Gradio: it yields plain
+as each stage completes instead of blocking silently for ~30s on the explainer.
+It is deliberately decoupled from Gradio: it yields plain
 TrialState snapshots, never gr.* objects, so it's testable with fakes.
 """
 
@@ -37,7 +36,7 @@ Stage = Literal[
 @dataclass(frozen=True)
 class TrialState:
     stage: Stage
-    status_message: str  # for the status area (docs/design_ui.md §4)
+    status_message: str  # for the status area
     diagnosis: Diagnosis | None = None
     explanation: str | None = None
     reading_mismatch: ReadingMismatch | None = None
@@ -47,10 +46,8 @@ class TrialState:
 
 
 def _default_audio_duration_seconds(path: Path) -> float:
-    # torchaudio.info() isn't available with this project's torchaudio/
-    # torchcodec backend (see pronunciation_coach/phoneme_recognizer.py's
-    # own _load_audio); .load() is the form already proven to work across
-    # the formats this project handles (wav from the browser, m4a samples).
+    # torchaudio.info() is unavailable with this project's torchcodec backend;
+    # load() works for both browser WAV recordings and M4A samples.
     waveform, sample_rate = torchaudio.load(str(path))
     return waveform.shape[-1] / sample_rate
 
@@ -85,6 +82,7 @@ def run_trial(
     participant_id = participant_id.strip()
     timings: dict[str, float] = {}
     total_start = time.monotonic()
+    audio_copy_error: str | None = None
 
     def finish(
         stage: Stage,
@@ -98,11 +96,18 @@ def run_trial(
         audio_file: str | None = None,
         transcript: str | None = None,
     ) -> TrialState:
+        """Persist the outcome and return its terminal UI state."""
         timings["total"] = time.monotonic() - total_start
         validation = diagnosis.validation if diagnosis else (
             reading_mismatch.validation if reading_mismatch else None
         )
         report = diagnosis.report if diagnosis else None
+        details = [detail for detail in (error_detail,) if detail]
+        if audio_copy_error is not None:
+            details.append(f"audio copy failed: {audio_copy_error}")
+        recorded_error_detail = "; ".join(details) or None
+
+        # Keep going without a saved copy rather than losing the trial outcome
         record = build_trial_record(
             app_session_id=app_session_id,
             participant_id=participant_id,
@@ -115,11 +120,12 @@ def run_trial(
             validation=validation,
             report=report,
             explanation=explanation,
-            error_detail=error_detail,
+            error_detail=recorded_error_detail,
             timings_sec=dict(timings),
             config=config,
             timestamp=now(),
         )
+
         try:
             append_trial_record(record, trial_logs_dir / "trial_log.jsonl")
             logged, log_error = True, None
@@ -131,18 +137,19 @@ def run_trial(
             diagnosis=diagnosis,
             explanation=explanation,
             reading_mismatch=reading_mismatch,
-            error_detail=error_detail,
+            error_detail=recorded_error_detail,
             logged=logged,
             log_error=log_error,
         )
 
-    # --- pre-checks (before touching any model: docs/design_ui.md §4) ---
+    # --- pre-checks ---
     if not participant_id:
         yield finish(
             "precheck_failed", "Please enter a participant ID",
             outcome="precheck_failed", error_detail="empty participant_id",
         )
         return
+
     if audio_path is None:
         yield finish(
             "precheck_failed", "Please record audio first",
@@ -155,10 +162,8 @@ def run_trial(
         dest = copy_trial_audio(audio_path, trial_logs_dir / "audio", participant_id, timestamp=now())
         audio_file = str(dest.relative_to(trial_logs_dir))
     except OSError as e:
-        # Keep going without a saved copy rather than losing the trial outcome
-        # over a filesystem hiccup; build_trial_record still records this.
-        audio_file = None
-        _audio_copy_error = str(e)  # noqa: F841 (kept for a future log_error surface)
+        # Analysis can continue from the original recording even if archival fails.
+        audio_copy_error = str(e)
 
     try:
         duration = audio_duration_seconds(audio_path)
@@ -189,7 +194,7 @@ def run_trial(
         diagnosis = pipeline.diagnose(audio_path, target_text=target_text, learner_l1=learner_l1)
     except ValueError as e:
         # e.g. Whisper/wav2vec2's own empty-output guards, or a custom
-        # target_text that fails g2p (docs/design_ui.md §4).
+        # target_text that fails g2p.
         yield finish(
             "precheck_failed", "Could not analyze. Please check the sentence and try again",
             outcome="precheck_failed", error_detail=str(e), audio_file=audio_file,

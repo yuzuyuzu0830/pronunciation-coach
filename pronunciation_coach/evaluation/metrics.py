@@ -1,9 +1,8 @@
-"""Ground-truth/system matching and FAR/FRR/DER computation (docs/design_eval.md §3).
+"""Ground-truth/system matching and FAR/FRR/DER computation.
 
-Pure functions only; no file or model I/O. build_utterance_judgements is the
-"matching" step that combines one utterance's ground truth, this system's
-espeak reference, and its detected PhonemeErrors into per-phone judgements;
-the compute_* functions turn those judgements into the reported metrics.
+This module matches corpus annotations to detected errors, 
+then aggregates the resulting per-phone judgements. 
+It performs no file or model I/O.
 """
 
 from __future__ import annotations
@@ -25,15 +24,9 @@ from pronunciation_coach.evaluation.so762 import (
 )
 from pronunciation_coach.types import PhonemeError
 
-# Confirmed against the real corpus (2026-07-22, docs/devlog.md): speechocean762
-# has no pronounced-phone (or equivalent) annotation of what a mispronounced
-# phone was actually replaced with, so DER's adapted definition (design_eval.md
-# §3.2 -- compare a detected substitution's content against ground truth) has
-# nothing to compare against here; der_counts.eligible is always 0 on this
-# corpus. The computation is kept (not removed) for a possible future
-# L2-ARCTIC extension where such annotations may exist. Surfaced in both
-# metrics.json and the markdown report so the 0.000 is never misread as "the
-# detector's diagnoses were all correct".
+# SpeechOcean762 lacks the pronounced-phone annotations required by the
+# adapted DER, so its eligible count is always zero. Keep the computation for
+# corpora such as L2-ARCTIC and expose this note with every result.
 DER_ADAPTATION_NOTE = (
     "DER is out of scope for speechocean762: the corpus provides no "
     "pronounced-phone (or equivalent) annotation of what a mispronounced "
@@ -75,12 +68,10 @@ def build_utterance_judgements(
     errors: list[PhonemeError],
     threshold: float = ACCURACY_THRESHOLD_DEFAULT,
 ) -> tuple[list[PhonemeJudgement], list[InsertionRecord]]:
-    """Match ground truth against this system's detected errors, one utterance's worth.
+    """Match one utterance's ground truth against detected errors.
 
-    reference_word_spans must be g2p.to_phonemes_by_word(utt.text.lower())
-    normalized per word, in the same word order as utt.words (§2.3): the
-    caller is responsible for running g2p, since that requires the real
-    phonemizer/espeak-ng dependency this module deliberately avoids.
+    `reference_word_spans` must be normalized per word and ordered like
+    `utt.words`; the caller owns the phonemizer dependency.
     """
     if len(utt.words) != len(reference_word_spans):
         raise ValueError(
@@ -88,18 +79,20 @@ def build_utterance_judgements(
             f"system reference has {len(reference_word_spans)}"
         )
 
-    # Insertions never consume a reference position (pipeline.extract_errors
-    # attributes them to the *preceding* position), so they can collide with
-    # a substitution/deletion's position; only sub/deletion keys are usable
-    # for the per-position lookup below.
+    # Insertions use the preceding position without consuming it, so only
+    # substitutions and deletions can represent a per-position decision.
     flaggable_by_position = {e.position: e for e in errors if e.op in ("substitution", "deletion")}
     insertions = [e for e in errors if e.op == "insertion" and e.actual is not None]
 
     judgements: list[PhonemeJudgement] = []
     ref_offset = 0
+    # Align each annotated word to its espeak reference before comparing
+    # corpus phone labels with detector positions.
     for word_annotation, (_, ref_phones) in zip(utt.words, reference_word_spans):
         position_map = map_word_positions(word_annotation.phones, ref_phones)
         for local_i, gt_phone in enumerate(word_annotation.phones):
+            # The accuracy score supplies the expected accept/reject decision;
+            # pronounced_phone, when present, is used separately for DER.
             accuracy = word_annotation.phones_accuracy[local_i]
             mispronounced = is_mispronounced(accuracy, threshold)
             gt_mispron = next(
@@ -109,6 +102,8 @@ def build_utterance_judgements(
 
             local_ref_pos = position_map.gt_to_reference[local_i]
             if local_ref_pos is None:
+                # A corpus phone with no espeak counterpart has no detector position,
+                # so it cannot contribute to FAR or FRR.
                 judgements.append(
                     PhonemeJudgement(
                         utt_id=utt.utt_id,
@@ -127,6 +122,8 @@ def build_utterance_judgements(
                 )
                 continue
 
+            # Detector positions span the full utterance; convert the local
+            # word position with ref_offset before looking up a flagged error.
             error = flaggable_by_position.get(ref_offset + local_ref_pos)
             flagged = error is not None
             judgements.append(
@@ -147,6 +144,8 @@ def build_utterance_judgements(
             )
         ref_offset += len(ref_phones)
 
+    # Insertions have no ground-truth phone position, so report their rate
+    # separately rather than forcing them into the confusion counts.
     insertion_records = [
         InsertionRecord(utt.utt_id, e.actual, e.actual in ESPEAK_VOWELS) for e in insertions
     ]
@@ -164,6 +163,7 @@ class ConfusionCounts:
 
 
 def compute_confusion(judgements: list[PhonemeJudgement]) -> ConfusionCounts:
+    """Count system decisions against ground truth, excluding unmapped phones."""
     ta = fr = fa = tr = excluded = 0
     for j in judgements:
         if j.excluded:
@@ -178,11 +178,13 @@ def compute_confusion(judgements: list[PhonemeJudgement]) -> ConfusionCounts:
 
 
 def compute_far(counts: ConfusionCounts) -> float:
+    """Return the fraction of mispronounced phones the system accepted."""
     denom = counts.false_accept + counts.true_reject
     return counts.false_accept / denom if denom else 0.0
 
 
 def compute_frr(counts: ConfusionCounts) -> float:
+    """Return the fraction of correct phones the system rejected."""
     denom = counts.false_reject + counts.true_accept
     return counts.false_reject / denom if denom else 0.0
 
@@ -204,6 +206,7 @@ class DerCounts:
 
 
 def compute_der(judgements: list[PhonemeJudgement]) -> tuple[float, DerCounts]:
+    """Measure diagnosis mismatches among unambiguous true-reject substitutions."""
     eligible = mismatched = excluded_ambiguous = excluded_non_sub = 0
     for j in judgements:
         if j.excluded or not j.ground_truth_mispronounced or not j.system_flagged:
@@ -244,29 +247,19 @@ def _top_phone_pairs(
 
 
 def top_false_reject_pairs(judgements: list[PhonemeJudgement], n: int = 20) -> list[PhonePairCount]:
-    """(reference_phone, hyp_phone) pairs behind false rejects, most frequent first.
+    """Return the most frequent phone pairs behind false rejects.
 
-    A false reject is a position where ground truth says the phone was
-    pronounced correctly but the system flagged it anyway. High-frequency
-    pairs are candidates for manual review: some may be notation variants
-    missing from g2p.EQUIVALENCE_CLASSES (docs/design_eval.md known-difficulty
-    list); others may be genuine over-detection by the recognizer. This
-    function only counts -- classifying a pair is a human judgment call
-    against EQUIVALENCE_CLASSES' inclusion criterion, not automated here.
+    Frequent pairs require manual review: they may be missing notation
+    equivalences or genuine recognizer over-detection.
     """
     return _top_phone_pairs(judgements, lambda j: not j.ground_truth_mispronounced, n)
 
 
 def top_true_reject_pairs(judgements: list[PhonemeJudgement], n: int = 20) -> list[PhonePairCount]:
-    """(reference_phone, hyp_phone) pairs behind true rejects, most frequent first.
+    """Return the most frequent phone pairs behind true rejects.
 
-    A true reject is a position where ground truth says the phone was
-    mispronounced and the system correctly flagged it. Comparing this
-    distribution against top_false_reject_pairs for the same (reference,
-    hyp) pair tests whether a high false-reject count reflects genuine
-    rater leniency on borderline cases (the same pair appears often on both
-    sides) versus the model being systematically too strict for that pair
-    (it appears almost only on the false-reject side).
+    Compare this distribution with false rejects to distinguish borderline
+    annotations from systematically strict detection.
     """
     return _top_phone_pairs(judgements, lambda j: j.ground_truth_mispronounced, n)
 
@@ -322,10 +315,8 @@ def compute_metrics(
 def to_json_dict(result: MetricsResult, run_metadata: dict) -> dict:
     """Serializable summary for metrics.json.
 
-    run_metadata carries execution conditions (subset, seed, model versions,
-    threshold, git commit -- see docs/design_eval.md §4) so a result can be
-    interpreted and reproduced without cross-referencing the run that
-    produced it.
+    Run metadata records the subset, seed, model versions, threshold, and
+    commit needed to interpret or reproduce a result.
     """
     return {
         "run_metadata": run_metadata,

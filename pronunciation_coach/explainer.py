@@ -1,8 +1,7 @@
 """Explanation generation from structured error reports (Ollama).
 
-The LLM explains only; detection stays with the acoustic side. The prompt
-therefore embeds already-detected errors and forbids re-judging them
-(docs/design.md §7).
+The LLM explains only; detection stays with the acoustic side. 
+The prompt therefore embeds already-detected errors and forbids re-judging them.
 """
 
 from __future__ import annotations
@@ -23,8 +22,8 @@ listed below. Your job is ONLY to explain them:
 - Do not invent phoneme symbols; use only the symbols given below.
 - Explain in simple, plain English without specialised phonetic jargon."""
 
-# v2: hardened against three issues seen in practice (symbol invention,
-# structural collapse, and dubious L1 generalizations). v1 is kept for comparison.
+# v2 prevents observed symbol invention, structural collapse, and unsupported
+# L1 generalizations. v1 remains available for comparison.
 _ROLE_INSTRUCTION_V2 = """\
 You are a pronunciation coach for English learners.
 A separate acoustic system has already detected the pronunciation errors \
@@ -43,14 +42,9 @@ separate final section after the numbered items; never drop it.
 on describing what happened and giving a practice method.
 - Explain in simple, plain English without specialised phonetic jargon."""
 
-# v3: structured-knowledge injection (docs/design_3c.md §5). Detection- and
-# structure-related v2 rules still apply; the role is narrowed from "explain"
-# to "rephrase pre-written material", since build_prompt now supplies a cause
-# and tip for the errors it can classify (§0: fixes 3b's fabricated symbols
-# and dubious L1 generalizations by not leaving that content to the model).
-# Errors without matched knowledge never reach the LLM at all — they are
-# rendered deterministically by render_facts_only_section (2026-07-22 run:
-# the model invented tips exactly for those facts-only items).
+# v3 limits the LLM to rephrasing matched knowledge.
+# Unmatched errors are rendered deterministically because the model invented
+# tips when asked to describe facts-only items in the 2026-07-22 run.
 _ROLE_INSTRUCTION_V3 = """\
 You are a pronunciation coach for English learners.
 A separate acoustic system has already detected the pronunciation errors \
@@ -110,13 +104,10 @@ def _tier_sort_key(record: KnowledgeRecord | None) -> int:
 def rank_errors_by_tier(
     errors: list[PhonemeError], reference_phonemes: list[str], l1: str
 ) -> list[tuple[PhonemeError, KnowledgeRecord | None]]:
-    """Pair each error with its matched knowledge record and sort by tier.
+    """Match errors to knowledge and sort them by explanation priority.
 
-    Tier order: l1_specific > phoneme_fallback > no match (docs/design_3c.md
-    §4). The sort is stable, so errors within the same tier keep their
-    original relative order — §4 does not define a secondary key. Callers
-    should pass only non-misread errors; misread words are handled
-    separately and never go through knowledge matching.
+    The stable order is L1-specific, phoneme fallback, then unmatched.
+    Misread words are handled separately.
     """
     pairs = [
         (error, match_knowledge(error, reference_phonemes, l1)) for error in errors
@@ -125,13 +116,10 @@ def rank_errors_by_tier(
 
 
 def _format_knowledge_block(record: KnowledgeRecord) -> list[str]:
-    """Inline knowledge directly under its error (docs/design_3c.md §5): no
-    separate section for the model to (mis)associate with the wrong item.
-    Fallback-tier records have cause=None (no L1-transfer claim, §3), so the
-    Cause line is omitted rather than printed as empty/None; their phenomenon
-    line is omitted too, since machine ids must not leak into learner-facing
-    text ("fallback_v" was quoted verbatim in the 2026-07-22 run). For
-    l1_specific records the human-readable phenomenon name is used, not the id.
+    """Place knowledge under its error to preserve the association.
+
+    Fallback records omit L1 causes and internal phenomenon ids after the
+    model exposed an id verbatim in the 2026-07-22 run.
     """
     block = []
     if record.tier == "l1_specific":
@@ -149,9 +137,8 @@ def _format_knowledge_block(record: KnowledgeRecord) -> list[str]:
 def format_facts_only_error(error: PhonemeError) -> str:
     """Deterministic learner-facing sentence for a facts-only error.
 
-    Pure function, never routed through the LLM: the 2026-07-22 comparison
-    run showed the model inventing tips and positional claims precisely for
-    the items it was told to state facts about.
+    These errors bypass the LLM because it invented unsupported tips for them
+    in the 2026-07-22 comparison run.
     """
     location = (
         f'In the word "{error.word}"'
@@ -171,12 +158,8 @@ FACTS_ONLY_HEADING = "Other detected differences:"
 # with; only that call site overrides the heading.
 ZERO_M_HEADING = "Detected differences:"
 
-# Opening lines of the M=0 output. Deterministic template, never generated:
-# skipping the LLM (2026-08-23) removed the encouragement sentence it used
-# to produce, and reinstating praise would misrepresent the result. The
-# system's detection precision is 0.069, so "nothing left to explain" is not
-# evidence that the learner pronounced anything correctly -- the text states
-# what was and was not found, and nothing about how well the learner did.
+# M=0 does not prove correct pronunciation, so this deterministic preamble
+# states only what the system found and avoids unsupported praise.
 ZERO_M_PREAMBLE = (
     "Differences were detected, and none of them matched a known "
     "pronunciation pattern.\n"
@@ -188,12 +171,7 @@ ZERO_M_PREAMBLE = (
 def render_facts_only_section(
     errors: list[PhonemeError], *, heading: str = FACTS_ONLY_HEADING
 ) -> str:
-    """Render the facts-only errors as the section appended after the LLM
-    output. Empty input renders nothing (no dangling heading).
-
-    heading is keyword-only and defaults to the section's original wording,
-    so the M>0 call site is unaffected by the M=0 override.
-    """
+    """Render facts-only errors, omitting the heading for empty input."""
     if not errors:
         return ""
     lines = [heading]
@@ -215,13 +193,10 @@ def _split_full_and_facts_only(
     l1: str,
     full_explanation_limit: int,
 ) -> tuple[list[tuple[PhonemeError, KnowledgeRecord]], list[PhonemeError]]:
-    """Split errors into LLM-bound (top N *with* matched knowledge) and
-    facts-only (no knowledge, or matched but beyond the limit).
+    """Split errors into LLM-bound and deterministic groups.
 
-    An unmatched error gives the model nothing to rephrase, so it is
-    facts-only even when it ranks inside the limit. rank_errors_by_tier puts
-    all matched errors before unmatched ones, so the first min(limit,
-    matched) pairs are exactly the full-explanation set.
+    Only the top N errors with matched knowledge reach the LLM.
+    Unmatched and lower-ranked errors remain facts-only.
     """
     _require_non_negative_limit(full_explanation_limit)
     ranked = rank_errors_by_tier(pronunciation_errors, reference_phonemes, l1)
@@ -233,6 +208,7 @@ def _split_full_and_facts_only(
 def _facts_only_errors(
     report: DiagnosisReport, full_explanation_limit: int
 ) -> list[PhonemeError]:
+    """Return errors that must be rendered outside the LLM response."""
     pronunciation_errors = [e for e in report.errors if not e.possibly_misread]
     if not pronunciation_errors:
         return []
@@ -251,10 +227,9 @@ def _append_v3_error_section(
     pronunciation_errors: list[PhonemeError],
     full_explanation_limit: int,
 ) -> None:
-    """v3 tiering: only the top-N errors with matched knowledge go to the LLM
-    for rephrasing; facts-only errors are excluded from the prompt entirely
-    and rendered by render_facts_only_section after the LLM output
-    (docs/design_3c.md §4/§5, revised after the 2026-07-22 comparison run).
+    """Add only the top-N matched errors to a v3 prompt.
+
+    Facts-only errors are rendered after the LLM output.
     """
     if not pronunciation_errors:
         return
@@ -280,7 +255,7 @@ def _append_v3_error_section(
         lines.append("")
         return
     # Literal count guards against the model inventing extra items when
-    # explained == 1 (regression observed in the 2026-07-20 comparison run, §5).
+    # explained == 1 (regression observed in the 2026-07-20 comparison run).
     lines.append(
         f"There are exactly {explained} numbered items below (this holds even "
         f"when {explained} == 1). Output exactly {explained} numbered items — do "
@@ -306,11 +281,9 @@ def _is_zero_m(
     report: DiagnosisReport,
     full_explanation_limit: int,
 ) -> bool:
-    """True for v3 when pronunciation errors exist but none has matched
-    knowledge (M=0). Recomputes the same split _append_v3_error_section will
-    make (an established pattern in this module -- see _facts_only_errors);
-    both call the pure _split_full_and_facts_only, so this costs a redundant
-    knowledge lookup, not a behavioral difference.
+    """Check whether v3 has errors but none selected for LLM explanation.
+
+    This repeats a pure knowledge lookup also used when building the prompt.
     """
     if not uses_structured_knowledge or not pronunciation_errors:
         return False
@@ -330,21 +303,10 @@ def _should_skip_llm(
 ) -> bool:
     """True when the prompt would leave the LLM nothing to say.
 
-    At M=0 build_prompt already withholds every error detail, the
-    transcript and the misread section, so the only thing left to generate
-    is an encouragement sentence -- while the role instruction's generic
-    rules ("one numbered item per error", "always address the reading
-    mistakes section") stay in the prompt and invite output that the input
-    does not support. The 2026-08-23 E2 (N=10) run measured exactly that on
-    simple_no_match x v3: phantom numbered items in 9/10 trials, an
-    invented bracketed transcription in 1/10, and empty or unsupported
-    reading-mistake sections in 7/10. The deterministic facts-only block
-    from the same run showed no such additions (0/50 items), so the fix is
-    to let that block stand alone rather than to add another prompt rule.
-
-    A misread is exempt: it still needs word-level coaching, so the call is
-    kept. Without one, every error in the report is a pronunciation error,
-    which is what _is_zero_m expects.
+    At M=0, the 2026-08-23 run produced unsupported numbered items and
+    reading-mistake sections. The deterministic facts-only block did not, so
+    it replaces the LLM call. Reports with misreads still need word-level
+    coaching and remain eligible for the LLM.
     """
     _require_non_negative_limit(full_explanation_limit)
     if any(error.possibly_misread for error in report.errors):
@@ -357,17 +319,16 @@ def build_prompt(
     version: str = DEFAULT_PROMPT_VERSION,
     full_explanation_limit: int = 3,
 ) -> str:
+    """Build a versioned prompt for a diagnosis report.
+
+    In v3, only errors with matched knowledge are included for explanation.
+    """
     _require_non_negative_limit(full_explanation_limit)
     if version not in _ROLE_INSTRUCTIONS:
         raise ValueError(
             f"Unknown prompt version {version!r}; available: {PROMPT_VERSIONS}"
         )
-    # Single source of truth for the v3-vs-legacy split, checked once here
-    # instead of comparing `version` against "v3" independently at each spot
-    # below. Two independent comparisons previously had to be kept in sync by
-    # hand (one `== "v3"`, one `!= "v3"`); a future version added to only one
-    # of them would silently mix its error-section format with the wrong
-    # trailing instruction text instead of failing loudly.
+    # Keep the v3-versus-legacy decision consistent across all prompt sections.
     uses_structured_knowledge = version == "v3"
 
     pronunciation_errors = [e for e in report.errors if not e.possibly_misread]
@@ -375,14 +336,9 @@ def build_prompt(
     misread_notices = dict.fromkeys(
         (e.word, e.misread_as) for e in report.errors if e.possibly_misread
     )
-    # At M=0 the LLM must get no raw material to reconstruct errors from --
-    # the transcript line and the misread section (both data and
-    # instruction) are dropped entirely, not just the instruction: a
-    # confirmation run still saw the model reconstruct a word-level
-    # paraphrase from the transcript, and fabricate an empty misread-section
-    # heading from the generic role-instruction sentence alone even when no
-    # such section was given. Misread facts remain visible to the learner
-    # via the UI's Misread? column (ui/interface.py), so nothing is lost.
+    # Withhold the transcript and misread section at M=0; either can prompt
+    # the model to reconstruct details absent from the structured error list.
+    # The UI still displays misread facts directly.
     zero_m = _is_zero_m(uses_structured_knowledge, pronunciation_errors, report, full_explanation_limit)
 
     lines = [_ROLE_INSTRUCTIONS[version], ""]
@@ -460,11 +416,9 @@ class OllamaExplainer:
         self._full_explanation_limit = full_explanation_limit
 
     def explain(self, report: DiagnosisReport) -> str:
+        """Generate coaching text, bypassing the LLM for facts-only v3 output."""
         if _should_skip_llm(report, self._prompt_version, self._full_explanation_limit):
-            # M=0 with no misread: the preamble and the facts-only section
-            # are the entire learner-facing output. The section is always
-            # non-empty here (M=0 means every detected error fell through to
-            # facts-only), so the preamble never introduces an empty list.
+            # M=0 always has at least one facts-only error here.
             return ZERO_M_PREAMBLE + "\n\n" + render_facts_only_section(
                 _facts_only_errors(report, self._full_explanation_limit),
                 heading=ZERO_M_HEADING,
