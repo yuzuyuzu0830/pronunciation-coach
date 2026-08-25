@@ -26,6 +26,7 @@ def default_device() -> torch.device:
 
 
 def _load_audio(audio_path: Path) -> torch.Tensor:
+    """Load audio as a mono waveform sampled at 16 kHz."""
     waveform, sample_rate = torchaudio.load(str(audio_path))
     if waveform.shape[0] > 1:
         waveform = waveform.mean(dim=0, keepdim=True)
@@ -37,13 +38,10 @@ def _load_audio(audio_path: Path) -> torch.Tensor:
 
 
 def _load_processor(model_name: str) -> Wav2Vec2Processor:
-    """Build the processor from an explicit tokenizer + feature extractor.
+    """Build a processor with an explicit phoneme tokenizer.
 
-    Wav2Vec2Processor.from_pretrained(model_name) can fail to auto-resolve
-    the phoneme tokenizer class for some espeak-phoneme CTC repos (a known
-    issue observed when comparing candidate models); constructing each part
-    explicitly and composing them sidesteps that regardless of which repo
-    triggers it.
+    Some espeak CTC repositories cannot auto-resolve their tokenizer through
+    `Wav2Vec2Processor.from_pretrained()`.
     """
     tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(model_name)
     feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
@@ -53,9 +51,7 @@ def _load_processor(model_name: str) -> Wav2Vec2Processor:
 class Wav2Vec2PhonemeRecognizer:
     """PhonemeRecognizer implementation backed by a wav2vec2 CTC model.
 
-    The model is loaded once at construction so multiple files can be
-    processed without reloading. Greedy argmax decoding is enough for the
-    prototype (docs/design.md §1).
+    The model is reused across files and decoded with greedy argmax.
     """
 
     def __init__(
@@ -71,14 +67,20 @@ class Wav2Vec2PhonemeRecognizer:
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
+        # Normalize the recording before constructing the batched model input.
         waveform = _load_audio(audio_path)
         inputs = self._processor(
             waveform.numpy(),
             sampling_rate=TARGET_SAMPLE_RATE,
             return_tensors="pt",
         )
+
+        # Only the model input moves to the selected inference device.
         with torch.no_grad():
             logits = self._model(inputs.input_values.to(self._device)).logits
+
+        # batch_decode applies CTC repeat collapsing and blank removal before
+        # the decoded string is split into espeak phoneme tokens.
         predicted_ids = torch.argmax(logits, dim=-1)
         phonemes = self._processor.batch_decode(predicted_ids)[0].split()
 

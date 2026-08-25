@@ -1,10 +1,7 @@
-"""speechocean762 ground-truth parsing for the detection evaluation (docs/design_eval.md §1).
+"""speechocean762 ground-truth parsing for the detection evaluation .
 
-The exact on-disk layout of scores.json is confirmed against the real corpus
-during data acquisition (docs/design_eval.md §7); this parser targets the
-documented Kaldi-recipe format and raises on missing/malformed fields rather
-than guessing, so a format mismatch surfaces immediately instead of silently
-producing wrong ground truth.
+The parser follows the corpus's Kaldi-recipe layout and raises on malformed
+fields instead of guessing (docs/design_eval.md §7).
 """
 
 from __future__ import annotations
@@ -61,11 +58,8 @@ def _parse_two_column_file(text: str, file_desc: str) -> dict[str, str]:
 def parse_utt2spk(text: str) -> dict[str, str]:
     """Parse a Kaldi-style utt2spk file: 'utt_id speaker_id' per line.
 
-    The utt id does NOT embed the speaker id as a prefix (confirmed against
-    the real corpus, 2026-07-22: e.g. utt "010610129" belongs to speaker
-    "1061", and no utt id in the corpus starts with its own speaker id) --
-    utt2spk is the only authoritative source, so speaker id must always be
-    looked up here, never derived from the utt id string.
+    Utterance IDs do not encode their speaker, so this mapping is the
+    authoritative source (confirmed against the corpus, 2026-07-22).
     """
     return _parse_two_column_file(text, "utt2spk")
 
@@ -76,8 +70,8 @@ def parse_spk2age(text: str) -> dict[str, int]:
 
 
 # Confirmed against the real corpus (2026-07-22): ages split cleanly into
-# 6-15 (25 speakers) and 19-43 (100 speakers) with no speaker aged 16-18, so
-# any cutoff placed in that gap gives the same classification.
+# 6-15 (25 speakers) and 19-43 (100 speakers) with no speaker aged 16-18, 
+# so any cutoff placed in that gap gives the same classification.
 CHILD_AGE_MAX = 15
 
 
@@ -122,12 +116,9 @@ def _parse_word(raw: dict[str, Any]) -> WordAnnotation:
 def parse_scores(raw: dict[str, Any], speaker_by_utt: dict[str, str]) -> list[UtteranceAnnotation]:
     """Parse a speechocean762 scores.json dict into UtteranceAnnotations.
 
-    speaker_by_utt must be built from parse_utt2spk() over {train,test}/utt2spk
-    (concatenated, or looked up separately) -- scores.json itself carries no
-    speaker id, and the utt id cannot be used to derive one (see parse_utt2spk).
-
-    Utt ids are sorted before parsing (dict order isn't guaranteed stable
-    across json libraries/versions) so downstream sampling is reproducible.
+    `speaker_by_utt` must cover the relevant train/test mappings because
+    scores.json carries no speaker IDs. Utterances are sorted by ID so later
+    seeded sampling remains reproducible.
     """
     utterances = []
     for utt_id in sorted(raw):
@@ -158,32 +149,29 @@ def parse_scores(raw: dict[str, Any], speaker_by_utt: dict[str, str]) -> list[Ut
 def stratified_sample(
     utterances: list[UtteranceAnnotation], n: int, seed: int
 ) -> list[UtteranceAnnotation]:
-    """Deterministically sample n utterances, round-robining across speakers.
+    """Sample deterministically while spreading selections across speakers.
 
-    Cycles through speakers (in seed-shuffled order), taking one utterance
-    per speaker per round, so a small subset still covers most of the
-    speaker pool rather than a few speakers' contiguous utterances (§1.3).
-
-    Adult/child balance (also required by §1.3) needs per-speaker metadata
-    (spk2age or equivalent) whose exact format is unconfirmed until the real
-    corpus is fetched (§7); it is layered on top of this speaker-level
-    sampling once that format is known, not implemented here.
+    Each round takes at most one utterance per speaker. Age metadata is not
+    used here; callers evaluate child/adult subsets separately.
     """
     if n > len(utterances):
         raise ValueError(f"Requested {n} utterances but only {len(utterances)} available")
     if n < 0:
         raise ValueError(f"n must be non-negative, got {n}")
 
+    # Build independent queues so one prolific speaker cannot dominate.
     by_speaker: dict[str, list[UtteranceAnnotation]] = {}
     for utt in utterances:
         by_speaker.setdefault(utt.speaker_id, []).append(utt)
 
+    # Shuffle both queue contents and speaker order with the same local RNG.
     rng = random.Random(seed)
     for utts in by_speaker.values():
         rng.shuffle(utts)
     speaker_order = list(by_speaker)
     rng.shuffle(speaker_order)
 
+    # Draw one item from each non-empty queue per round until n is reached.
     queues = {spk: list(utts) for spk, utts in by_speaker.items()}
     selected: list[UtteranceAnnotation] = []
     while len(selected) < n:

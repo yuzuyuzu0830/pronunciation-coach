@@ -1,7 +1,7 @@
 """Phoneme sequence alignment via edit-distance dynamic programming.
 
 Pure alignment only: converting non-match operations into PhonemeError is the
-pipeline's responsibility (docs/design.md §2, §5).
+pipeline's responsibility.
 """
 
 from __future__ import annotations
@@ -24,17 +24,19 @@ def align_phonemes(
     """Align reference and hypothesis phonemes with edit operations.
 
     Needleman–Wunsch-style DP. Ties resolve substitution > deletion >
-    insertion during backtrace, so the result is deterministic. The
-    substitution cost function is injectable to allow a feature-weighted
-    cost later without touching this module.
+    insertion during backtrace, so the result is deterministic. 
+    Evaluation code can inject a transcription-aware substitution cost.
     """
     n, m = len(reference), len(hypothesis)
 
+    # The first row and column represent aligning against an empty sequence.
     cost = [[0.0] * (m + 1) for _ in range(n + 1)]
     for i in range(1, n + 1):
         cost[i][0] = i * gap_cost
     for j in range(1, m + 1):
         cost[0][j] = j * gap_cost
+
+    # Each cell chooses the cheapest diagonal, deletion, or insertion path.
     for i in range(1, n + 1):
         for j in range(1, m + 1):
             cost[i][j] = min(
@@ -45,6 +47,7 @@ def align_phonemes(
 
     ops: list[AlignmentOp] = []
     i, j = n, m
+    # The branch order encodes the documented tie-break preference.
     while i > 0 or j > 0:
         if (
             i > 0
@@ -62,5 +65,6 @@ def align_phonemes(
             ops.append(AlignmentOp("insertion", None, hypothesis[j - 1]))
             j -= 1
 
+    # Backtrace visits the alignment from end to start.
     ops.reverse()
     return ops

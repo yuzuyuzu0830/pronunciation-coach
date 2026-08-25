@@ -1,25 +1,8 @@
-"""Language-neutral facts about English phonemes: an example word and the
-spelling (grapheme) usually associated with the sound (per-symbol, not
-per-display-string -- docs/design_ui.md "音素表示のヒント併記" section).
+"""Language-neutral example words and graphemes for English phonemes.
 
-This module holds no display strings: it only states, for a given target
-language (English) phoneme, what it sounds like and how it's spelled. How
-that fact gets phrased for a reader belongs to the localization layer
-(ui/phoneme_hint_format.py), not here -- this table is reusable unchanged
-for a Spanish-L1 or Chinese-L1 trial, or an English-language UI, since none
-of that depends on the learner's L1 or the UI's display language.
-
-Coverage: the phonemes the current trial sentences (ui/sentences.py) can
-produce, plus a handful of other common English phonemes (verified against
-real g2p output, not guessed) -- not the full espeak IPA inventory.
-Symbols not covered here render without a hint (docs/design_ui.md
-"音素表示のヒント併記"): this table is deliberately incomplete, not a
-correctness-critical lookup.
-
-Post-normalize() notation variants (docs/design.md §4) are never separate
-entries here: e.g. "r"/"ɜː" never appear in reference/hypothesis phonemes by
-the time they reach the UI (g2p.EQUIVALENCE_CLASSES already canonicalizes
-them to "ɹ"/"ɚ"), so only the canonical symbol needs a hint.
+UI phrasing belongs to `phoneme_hint_format.py`. Coverage is intentionally
+limited to trial and common phonemes; unknown symbols render without a hint.
+Keys use the canonical symbols produced by `g2p.normalize()`.
 """
 
 from __future__ import annotations
@@ -87,22 +70,13 @@ PHONEME_HINTS: dict[str, PhonemeHint] = {
 def locate_grapheme(
     word: str, phoneme: str, phoneme_index_in_word: int, word_phonemes: list[str]
 ) -> tuple[int, int] | None:
-    """Best-effort (start, end) character range in `word` for one occurrence
-    of `phoneme` -- an approximation, not a true G2P alignment (design_ui.md
-    §11 records the trade-off). Returns None whenever the heuristic can't
-    confidently disambiguate; callers must treat that as "no highlight", not
-    an error.
+    """Locate a phoneme's likely grapheme range without full G2P alignment.
 
-    Heuristic: PHONEME_HINTS gives `phoneme`'s typical spelling (grapheme).
-    If that grapheme substring appears in `word` exactly as many times as
-    `phoneme` appears in `word_phonemes`, the Nth phonetic occurrence (in
-    phoneme-sequence order) is assumed to line up with the Nth spelled
-    occurrence (left to right, non-overlapping). This breaks for irregular
-    spellings (silent letters, a digraph not covered by the table, two
-    different phonemes sharing one typical grapheme in the same word) --
-    the counts won't match in those cases, and this returns None rather
-    than guessing which occurrence is which.
+    The Nth phoneme occurrence maps to the Nth typical grapheme occurrence
+    only when their counts agree. Ambiguous or inconsistent input returns
+    None instead of guessing.
     """
+    # Reject inconsistent caller input and phonemes without a known grapheme.
     if not (0 <= phoneme_index_in_word < len(word_phonemes)):
         return None
     if word_phonemes[phoneme_index_in_word] != phoneme:
@@ -111,6 +85,7 @@ def locate_grapheme(
     if hint is None:
         return None
 
+    # Determine which occurrence of this phoneme the caller selected.
     occurrence_rank = sum(
         1 for i in range(phoneme_index_in_word + 1) if word_phonemes[i] == phoneme
     )
@@ -118,6 +93,7 @@ def locate_grapheme(
 
     grapheme = hint.grapheme.lower()
     word_lower = word.lower()
+    # Collect non-overlapping grapheme occurrences from left to right.
     positions: list[tuple[int, int]] = []
     search_from = 0
     while True:
@@ -125,8 +101,9 @@ def locate_grapheme(
         if idx == -1:
             break
         positions.append((idx, idx + len(grapheme)))
-        search_from = idx + len(grapheme)  # non-overlapping matches only
+        search_from = idx + len(grapheme)
 
+    # A count mismatch signals an irregular or ambiguous spelling.
     if len(positions) != total_phoneme_occurrences:
         return None
     return positions[occurrence_rank - 1]

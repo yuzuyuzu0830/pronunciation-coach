@@ -1,7 +1,7 @@
 """Pipeline orchestrator: validation gate, alignment, error extraction, explanation.
 
 Depends only on the module Protocols so concrete models can be swapped for
-comparison experiments (docs/design.md §2).
+comparison experiments.
 """
 
 from __future__ import annotations
@@ -47,9 +47,9 @@ def extract_errors(
     """Convert non-match alignment ops into PhonemeErrors with word attribution.
 
     Positions index the reference sequence. An insertion is attributed to the
-    preceding reference position's word (a leading insertion clamps to the
-    first word).
+    preceding reference position's word (a leading insertion clamps to the first word).
     """
+    # Expand word spans into a lookup parallel to the reference phone sequence.
     word_at: list[str] = [
         word for word, phones in word_spans for _ in phones
     ]
@@ -59,6 +59,8 @@ def extract_errors(
 
     errors: list[PhonemeError] = []
     ref_pos = 0
+    # Matches, substitutions, and deletions consume a reference phone;
+    # insertions stay anchored to the preceding reference position.
     for op in ops:
         if op.op == "match":
             ref_pos += 1
@@ -85,11 +87,11 @@ def flag_misread_errors(
 ) -> list[PhonemeError]:
     """Mark errors in words that failed reading validation as possible misreads.
 
-    Such errors reflect a different word being read, not a pronunciation
-    habit, so the explainer must switch to word-level guidance for them.
+    Such errors reflect a different word being read, not a pronunciation habit,
+    so the explainer must switch to word-level guidance for them.
 
-    Lookup uses validator.normalize_word so G2P's case-preserving error.word
-    matches the lowercased (and digit-normalized) word_mismatches keys.
+    Lookup uses validator.normalize_word so G2P's case-preserving error.
+    word matches the lowercased (and digit-normalized) word_mismatches keys.
     """
     flagged: list[PhonemeError] = []
     for error in errors:
@@ -128,12 +130,12 @@ class Pipeline:
         target_text: str | None = None,
         learner_l1: str = "Japanese",
     ) -> DiagnoseResult:
-        """Everything through detection, stopping before explanation.
+        """Run transcription, validation, and detection without explanation.
 
-        Split out from run() so a caller (the UI's staged display, trial
-        logging) can show/record detection results before paying the
-        explainer's latency (docs/design_ui.md §3).
+        This boundary lets callers display or log detection before waiting for
+        the explainer.
         """
+        # Reject a wrong sentence before running phoneme recognition.
         transcript = self._transcriber.transcribe(audio_path)
 
         validation = None
@@ -142,17 +144,19 @@ class Pipeline:
             if not validation.passed:
                 return ReadingMismatch(validation)
 
+        # Build normalized reference and hypothesis sequences in the same
+        # symbol inventory while retaining reference word boundaries.
         base_text = target_text if target_text is not None else transcript
-        # Normalize per word so word spans stay consistent with the flattened
-        # reference sequence.
         word_spans = [
             (word, normalize(phones)) for word, phones in self._g2p_by_word(base_text)
         ]
         reference = [phone for _, phones in word_spans for phone in phones]
         hypothesis = normalize(self._phoneme_recognizer.recognize(audio_path))
 
+        # Convert alignment differences into word-attributed detector output.
         ops = align_phonemes(reference, hypothesis)
         errors = extract_errors(ops, word_spans)
+        # Keep word-reading mistakes separate from pronunciation habits.
         if validation is not None and validation.word_mismatches:
             errors = flag_misread_errors(errors, validation.word_mismatches)
 
@@ -167,9 +171,7 @@ class Pipeline:
         return Diagnosis(report=report, validation=validation)
 
     def explain(self, diagnosis: Diagnosis) -> CoachingResult:
-        """The second half of run(), split out so a caller can display/log
-        the diagnosis before paying the explainer's latency (docs/design_ui.md
-        §3) instead of only ever getting both at once from run()."""
+        """Generate coaching for an existing diagnosis."""
         explanation = self._explainer.explain(diagnosis.report)
         return CoachingResult(
             report=diagnosis.report, explanation=explanation, validation=diagnosis.validation
@@ -181,6 +183,7 @@ class Pipeline:
         target_text: str | None = None,
         learner_l1: str = "Japanese",
     ) -> PipelineResult:
+        """Run diagnosis and, when validation passes, generate coaching."""
         diagnosis = self.diagnose(audio_path, target_text, learner_l1)
         if isinstance(diagnosis, ReadingMismatch):
             return diagnosis
