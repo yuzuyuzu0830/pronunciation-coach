@@ -1,4 +1,4 @@
-"""stage2 (scoring) end-to-end test against a small fixture (docs/design_eval.md §8 step 4).
+"""stage2 (scoring) end-to-end test against a small fixture.
 
 scripts/evaluate_detection.py isn't a package, so it's loaded via importlib
 rather than a normal import.
@@ -6,7 +6,9 @@ rather than a normal import.
 
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -26,8 +28,7 @@ _spec.loader.exec_module(evaluate_detection)
 
 # Ground truth for "THIS IS HIGH" (DH mispronounced as D, HH mispronounced but
 # missed by the recognizer) and "WATER" (fully correct), matching real
-# espeak-ng output for this text (verified: to_phonemes_by_word("this is
-# high") == this/DH,IH1,S is/IH1,Z high/HH,AY1; "water" == W,AO1,T,ER0).
+# espeak-ng output for this text.
 SCORES = {
     "0001010011": {
         "text": "THIS IS HIGH",
@@ -66,8 +67,8 @@ SCORES = {
 }
 
 # Recognizer output: "this" read as "dis" (ð->d, the flagged DH error); HIGH's
-# HH mispronunciation is NOT caught by the recognizer (hyp says "h", matching
-# the reference) -- a realistic false accept. WATER is read perfectly.
+# HH mispronunciation is NOT caught by the recognizer, 
+# a realistic false accept. WATER is read perfectly.
 HYP_PHONEMES = {
     "0001010011": ["d", "ɪ", "s", "ɪ", "z", "h", "aɪ"],
     "0002030022": ["w", "ɔː", "ɾ", "ɚ"],
@@ -79,6 +80,23 @@ SPEAKER_BY_UTT = {"0001010011": "0001", "0002030022": "0002"}
 
 
 AGE_BY_SPEAKER = {"0001": 10, "0002": 25}  # speaker 0001: child, 0002: adult
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [OSError("git unavailable"), subprocess.CalledProcessError(128, ["git"])],
+)
+def test_git_commit_short_returns_none_for_expected_git_failures(exc):
+    with patch.object(evaluate_detection.subprocess, "run", side_effect=exc):
+        assert evaluate_detection._git_commit_short() is None
+
+
+def test_git_commit_short_does_not_hide_unexpected_errors():
+    with patch.object(
+        evaluate_detection.subprocess, "run", side_effect=RuntimeError("bug")
+    ):
+        with pytest.raises(RuntimeError, match="bug"):
+            evaluate_detection._git_commit_short()
 
 
 def _write_spk2age(tmp_path: Path) -> list[Path]:
@@ -167,7 +185,6 @@ def test_cmd_score_writes_expected_output_files(tmp_path):
 
 
 # --- age_group_breakdown ---
-
 
 @requires_espeak
 def test_age_group_breakdown_splits_by_child_adult(tmp_path):

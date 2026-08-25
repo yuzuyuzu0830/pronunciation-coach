@@ -1,4 +1,4 @@
-"""Trial session logging: one JSONL record per trial (docs/design_ui.md §5).
+"""Trial session logging: one JSONL record per trial.
 
 build_trial_record is pure (dict in/out); append_trial_record and
 copy_trial_audio are the only I/O in this module, kept thin so the record
@@ -40,11 +40,10 @@ def build_trial_record(
 ) -> dict:
     """Assemble one trial_log.jsonl record.
 
-    app_session_id identifies the app launch (a fresh UUID per process
-    start), not the participant or the trial -- if the app is restarted
-    mid-trial-day, records before and after the restart carry different
-    values, so an environment-caused behavior change can be isolated to a
-    specific launch during analysis.
+    app_session_id identifies the app launch, not the participant or the trial, 
+    records before and after the restart carry different values,
+    so an environment-caused behavior change can be isolated to a specific
+    launch during analysis.
     """
     ts = timestamp if timestamp is not None else datetime.now(timezone.utc)
     return {
@@ -88,8 +87,8 @@ def copy_trial_audio(
     participant_id: str,
     timestamp: datetime | None = None,
 ) -> Path:
-    """Copy the recorded audio into audio_dir before it can be cleaned up
-    (Gradio's own temp file), named by UTC timestamp + participant id so
+    """Copy the recorded audio into audio_dir before it can be cleaned up,
+    named by UTC timestamp + participant id so
     files sort chronologically and stay attributable at a glance."""
     ts = timestamp if timestamp is not None else datetime.now(timezone.utc)
     audio_dir.mkdir(parents=True, exist_ok=True)

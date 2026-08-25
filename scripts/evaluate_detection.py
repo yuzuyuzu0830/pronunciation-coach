@@ -1,7 +1,7 @@
-"""CLI: speechocean762 detection evaluation (docs/design_eval.md §4, §8).
+"""CLI: speechocean762 detection evaluation.
 
 Three stages, run separately so a failed/changed run doesn't force redoing
-model inference (§5):
+model inference:
 
   sample     -- pick a reproducible utterance subset from scores.json
   recognize  -- stage1: run phoneme recognition, append to a resumable JSONL
@@ -46,6 +46,7 @@ from pronunciation_coach.pipeline import PhonemeRecognizer, extract_errors
 
 
 def _git_commit_short() -> str | None:
+    """Return the commit for run metadata, or None when Git is unavailable."""
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -55,7 +56,7 @@ def _git_commit_short() -> str | None:
             cwd=Path(__file__).resolve().parent.parent,
         )
         return result.stdout.strip()
-    except Exception:
+    except (OSError, subprocess.CalledProcessError):
         return None
 
 
@@ -90,8 +91,8 @@ def score_utterance(
     threshold: float,
     reference_word_spans: list[tuple[str, list[str]]] | None = None,
 ) -> UtteranceScoreOutcome:
-    """Run the detection pipeline's alignment logic (not the full Pipeline --
-    no transcriber/explainer needed) and match it against ground truth.
+    """Run the detection pipeline's alignment logic
+    and match it against ground truth.
 
     Prefer passing precomputed ``reference_word_spans`` from a batched g2p
     call (see run_stage2); the per-utterance path is kept for single-utt use.
@@ -100,14 +101,12 @@ def score_utterance(
         try:
             reference_word_spans = build_reference_word_spans(utt.text)
         except ValueError as e:
-            # Word/group count mismatch from to_phonemes_by_word, or ValueError
-            # raised inside phonemizer itself.
+            # Invalid per-word G2P output affects only this utterance.
             return UtteranceScoreOutcome(
                 utt.utt_id, [], [], f"g2p_word_count_mismatch: {e}"
             )
         except (RuntimeError, OSError) as e:
-            # phonemizer/espeak-ng commonly surfaces backend failures this way;
-            # skip the utterance rather than aborting the whole stage2 batch.
+            # Keep backend failures distinguishable from word-count failures.
             return UtteranceScoreOutcome(utt.utt_id, [], [], f"g2p_failed: {e}")
 
     reference = [p for _, phones in reference_word_spans for p in phones]
@@ -129,11 +128,17 @@ def run_stage2(
     hyp_by_utt: dict[str, list[str]],
     threshold: float,
 ) -> tuple[MetricsResult, list[PhonemeJudgement], list[InsertionRecord], list[str]]:
+    """Score stage1 hypotheses and aggregate metrics for successful utterances.
+
+    Missing hypotheses and per-utterance G2P or mapping failures are returned
+    in `skipped` without invalidating the remaining batch.
+    """
     all_judgements: list[PhonemeJudgement] = []
     all_insertions: list[InsertionRecord] = []
     skipped: list[str] = []
     scored_count = 0
 
+    # Exclude utterances that stage1 did not produce a hypothesis for.
     pending: list[UtteranceAnnotation] = []
     for utt in utterances:
         if utt.utt_id not in hyp_by_utt:
@@ -141,8 +146,7 @@ def run_stage2(
             continue
         pending.append(utt)
 
-    # One espeak backend + one phonemize(list) for all texts (phonemizer docs
-    # discourage per-line calls that re-init the backend each time).
+    # Use one espeak backend call for all remaining texts.
     g2p_results: list[list[tuple[str, list[str]]] | ValueError] | None
     try:
         g2p_results = to_phonemes_by_word_many([utt.text.lower() for utt in pending])
@@ -152,6 +156,7 @@ def run_stage2(
         result = compute_metrics([], [], 0)
         return result, [], [], skipped
 
+    # Score valid G2P results independently so one malformed utterance can be skipped.
     for utt, g2p_result in zip(pending, g2p_results):
         if isinstance(g2p_result, ValueError):
             skipped.append(f"{utt.utt_id}: g2p_word_count_mismatch: {g2p_result}")
@@ -166,6 +171,8 @@ def run_stage2(
         all_judgements.extend(outcome.judgements)
         all_insertions.extend(outcome.insertions)
         scored_count += 1
+
+    # Only successfully scored utterances contribute to rates and denominators.
     result = compute_metrics(all_judgements, all_insertions, scored_count)
     return result, all_judgements, all_insertions, skipped
 
@@ -178,9 +185,9 @@ def run_stage1(
 ) -> tuple[int, list[str]]:
     """Recognize phonemes for utterances not already in out_path.
 
-    Appends one JSON line per utterance and flushes immediately, so an
-    interruption loses at most the in-flight utterance (§5): rerunning with
-    the same out_path skips whatever's already recorded there.
+    Appends one JSON line per utterance and flushes immediately,
+    so an interruption loses at most the in-flight utterance:
+    rerunning with the same out_path skips whatever's already recorded there.
     """
     already_done = set(load_hyp_phonemes(out_path).keys()) if out_path.exists() else set()
     skipped: list[str] = []
@@ -196,8 +203,8 @@ def run_stage1(
             try:
                 phonemes = recognizer.recognize(path)
             except Exception as e:
-                # Model/audio failures vary widely (torch runtime errors, a
-                # corrupt WAV); skip this utterance rather than losing every
+                # Model/audio failures vary widely (torch runtime errors,
+                # a corrupt WAV); skip this utterance rather than losing every
                 # already-recognized one still pending in the batch.
                 skipped.append(f"{utt.utt_id}: recognize_failed: {e}")
                 continue
@@ -218,7 +225,7 @@ def _load_utterances(
     scores_json: Path, utt2spk_paths: list[Path], utt_ids: Path | None
 ) -> list[UtteranceAnnotation]:
     """Shared loader for all three subcommands: scores.json + speaker lookup
-    (utt id does not embed speaker id -- see so762.parse_utt2spk) + optional
+    (utt id does not embed speaker id) + optional
     utt-id restriction (e.g. a test-split or sampled subset list)."""
     raw = json.loads(scores_json.read_text(encoding="utf-8"))
     speaker_by_utt = _load_two_column_mapping(utt2spk_paths, parse_utt2spk)
@@ -236,7 +243,7 @@ def age_group_breakdown(
     skipped: list[str],
     spk2age_paths: list[Path],
 ) -> dict:
-    """Score child/adult subsets separately (docs/design_eval.md §1.3 DEI note).
+    """Score child/adult subsets separately.
 
     Filters judgements/insertions already produced by run_stage2; does not
     re-run g2p, alignment, or judgement building.
@@ -274,7 +281,7 @@ def age_group_breakdown(
 
 def _cmd_sample(args: argparse.Namespace) -> None:
     # e.g. a test-split utt-id list extracted from the corpus's test/utt2spk,
-    # so sampling draws from test only (docs/design_eval.md §1.3), not
+    # so sampling draws from test only, not
     # scores.json's combined train+test 5000.
     utterances = _load_utterances(args.scores_json, args.utt2spk, args.utt_ids)
     selected = stratified_sample(utterances, args.n, args.seed)
