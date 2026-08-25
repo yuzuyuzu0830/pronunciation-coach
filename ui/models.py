@@ -1,9 +1,7 @@
-"""Startup model loading + connectivity checks (docs/design_ui.md §2).
+"""Startup model loading + connectivity checks.
 
 Fail-fast: any check failing raises StartupError with a message telling the
-operator how to fix it. app.py catches this and exits before opening the UI
--- a degraded start with a broken component is worse for a supervised trial
-than refusing to start at all.
+operator how to fix it. app.py catches this and exits before opening the UI.
 """
 
 from __future__ import annotations
@@ -31,6 +29,7 @@ class StartupError(RuntimeError):
 
 
 def _git_commit_short() -> str | None:
+    """Return the commit for run metadata, or None when Git is unavailable."""
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -40,11 +39,12 @@ def _git_commit_short() -> str | None:
             cwd=_REPO_ROOT,
         )
         return result.stdout.strip()
-    except Exception:
+    except (OSError, subprocess.CalledProcessError):
         return None
 
 
 def check_espeak_and_trial_sentences() -> None:
+    """Verify espeak and every fixed trial sentence before UI startup."""
     try:
         from phonemizer.backend import EspeakBackend
     except ImportError as e:
@@ -57,10 +57,7 @@ def check_espeak_and_trial_sentences() -> None:
     for sentence in TRIAL_SENTENCES:
         try:
             to_phonemes_by_word(sentence.text)
-        # ValueError: per-text word/group mismatch (g2p contract).
-        # RuntimeError/OSError: phonemizer/espeak backend failures that
-        # to_phonemes_by_word documents as propagating; wrap so app.py's
-        # StartupError handler can fail-fast instead of dumping a traceback.
+        # Convert expected G2P/backend failures into an operator-facing error.
         except (ValueError, RuntimeError, OSError) as e:
             raise StartupError(
                 f"Trial sentence {sentence.text!r} failed g2p: {e}. "
@@ -69,6 +66,7 @@ def check_espeak_and_trial_sentences() -> None:
 
 
 def check_ollama(base_url: str = config.OLLAMA_BASE_URL, model: str = config.OLLAMA_MODEL) -> None:
+    """Verify Ollama connectivity and the configured model availability."""
     try:
         response = requests.get(f"{base_url}/api/tags", timeout=5)
         response.raise_for_status()

@@ -1,15 +1,21 @@
 """Only the pure precheck logic is unit-tested here (mocked network/espeak);
 load_models() itself needs real Whisper/wav2vec2/Ollama and is exercised by
-the manual E2E check (docs/design_ui.md §9 step 6), matching how
+the manual E2E check, matching how
 phoneme_recognizer.py's model-loading constructor is untested elsewhere.
 """
 
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
-from ui.models import StartupError, check_espeak_and_trial_sentences, check_ollama
+from ui.models import (
+    StartupError,
+    _git_commit_short,
+    check_espeak_and_trial_sentences,
+    check_ollama,
+)
 from ui.sentences import TRIAL_SENTENCES
 
 
@@ -24,6 +30,21 @@ def _patch_espeak_available():
     backend = MagicMock()
     backend.is_available.return_value = True
     return patch("phonemizer.backend.EspeakBackend", backend)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [OSError("git unavailable"), subprocess.CalledProcessError(128, ["git"])],
+)
+def test_git_commit_short_returns_none_for_expected_git_failures(exc):
+    with patch("ui.models.subprocess.run", side_effect=exc):
+        assert _git_commit_short() is None
+
+
+def test_git_commit_short_does_not_hide_unexpected_errors():
+    with patch("ui.models.subprocess.run", side_effect=RuntimeError("bug")):
+        with pytest.raises(RuntimeError, match="bug"):
+            _git_commit_short()
 
 
 @pytest.mark.parametrize("exc", [ValueError("bad sentence"), RuntimeError("espeak died"), OSError(2, "no espeak")])
