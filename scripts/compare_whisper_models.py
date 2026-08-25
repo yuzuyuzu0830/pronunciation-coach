@@ -1,17 +1,8 @@
 """Compare Whisper model sizes (base/small/medium) on real trial recordings.
 
-Trigger: the P01 trial (2026-07-27) surfaced Whisper-base mis-transcriptions
-that produced false reading-mismatch gate failures and false misread flags
-(e.g. "The weather is nice today." -> "And the river is nice today."). This
-replays the same recordings through every model size to measure whether a
-larger model actually fixes it, and at what load/inference-time cost, before
-changing ui/config.py's WHISPER_MODEL_SIZE.
-
-Source of truth for target sentence <-> audio file pairing is
-results/trial_logs/trial_log.jsonl (not re-derived): every logged trial for
-the given participant with a saved audio file is included, regardless of
-outcome -- reading_mismatch entries are Whisper-base's own failure cases and
-are exactly what a candidate model must be checked against.
+Replays saved trial audio to compare transcription accuracy and inference
+cost before changing the UI model. The trial log is the source of truth for
+audio/target pairs, including prior reading-mismatch outcomes.
 """
 
 import argparse
@@ -33,9 +24,7 @@ DEFAULT_MODEL_SIZES = ["base", "small", "medium"]
 
 
 def load_trial_cases(trial_log_path: Path, participant_id: str) -> list[dict]:
-    """One case per logged trial with a saved audio file, for the given
-    participant. target_text-less trials (free practice) are skipped: there
-    is no reference to compute WER against."""
+    """Load a participant's saved trials that have target text for WER."""
     cases = []
     with trial_log_path.open() as f:
         for line in f:
@@ -54,13 +43,12 @@ def load_trial_cases(trial_log_path: Path, participant_id: str) -> list[dict]:
 def evaluate_case(
     transcriber: WhisperTranscriber, case: dict, trial_logs_dir: Path
 ) -> dict:
-    """Transcribe one recording and score WER. Transcription failures are
-    recorded as an error row instead of aborting the whole comparison run."""
+    """Transcribe and score one recording without aborting on case failures."""
     audio_path = trial_logs_dir / case["audio_file"]
     started = time.perf_counter()
     try:
         transcript = transcriber.transcribe(audio_path)
-    except (FileNotFoundError, ValueError, OSError) as exc:
+    except (FileNotFoundError, ValueError, OSError, RuntimeError) as exc:
         return {
             "audio_file": case["audio_file"],
             "logged_outcome": case["outcome"],
@@ -100,6 +88,10 @@ def run_model(
 def format_report(
     participant_id: str, model_reports: dict[str, tuple[float, list[dict]]]
 ) -> str:
+    """Render model summaries and case details as Markdown.
+
+    Failed cases remain visible but do not contribute to mean WER or gate counts.
+    """
     lines = [
         f"# Whisper model comparison on real recordings (participant {participant_id})",
         "",
@@ -111,6 +103,7 @@ def format_report(
     ]
 
     for model_size, (load_time, results) in model_reports.items():
+        # Aggregate accuracy only from successful transcriptions.
         scored = [r for r in results if r["error"] is None]
         errors = [r for r in results if r["error"] is not None]
         total_time = sum(r["elapsed_sec"] for r in results)
@@ -134,6 +127,7 @@ def format_report(
             "| audio_file | logged outcome | target_text | transcript | WER | gate |",
             "|---|---|---|---|---|---|",
         ]
+        # Preserve every attempted recording in the detailed comparison table.
         for r in results:
             if r["error"] is not None:
                 lines.append(

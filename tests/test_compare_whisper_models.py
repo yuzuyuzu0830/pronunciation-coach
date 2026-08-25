@@ -1,6 +1,6 @@
 """Unit tests for scripts/compare_whisper_models.py helpers.
 
-No real Whisper model is loaded -- a stub transcriber drives evaluate_case
+No real Whisper model is loaded
 and format_report so a single bad recording cannot regress into aborting
 the whole multi-model run.
 """
@@ -72,6 +72,17 @@ def test_evaluate_case_records_empty_transcript_without_raising(tmp_path: Path):
 
     assert result["error"] is not None
     assert "ValueError" in result["error"]
+
+
+def test_evaluate_case_records_model_runtime_error_without_raising(tmp_path: Path):
+    transcriber = _StubTranscriber(
+        lambda _p: (_ for _ in ()).throw(RuntimeError("inference failed"))
+    )
+
+    result = evaluate_case(transcriber, _case(), tmp_path)
+
+    assert result["transcript"] is None
+    assert result["error"] == "RuntimeError: inference failed"
 
 
 def test_format_report_includes_error_rows_and_skips_them_in_wer():
