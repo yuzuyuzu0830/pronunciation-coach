@@ -1,10 +1,7 @@
-"""Gradio layout and event wiring (docs/design_ui.md §1).
+"""Gradio layout, result formatting, and event wiring.
 
-The pure helpers (resolve_target, _errors_to_dataframe, _transcript_markdown,
-_log_status_markdown) are unit-tested directly; build_app()'s gr.Blocks
-wiring itself is exercised by the manual E2E check (docs/design_ui.md §9
-step 6), the same way this project smoke-tests other model-backed glue code
-instead of unit-testing it.
+Model-backed Blocks wiring is covered by the manual E2E check in
+docs/design_ui.md; the formatting helpers are unit-tested directly.
 """
 
 from __future__ import annotations
@@ -26,11 +23,22 @@ from ui.trial_logging import TargetSource
 RESULT_HEADERS = ["#", "Word", "Type", "expected", "actual", "Misread?"]
 RESULT_DATATYPES = ["str", "html", "str", "str", "str", "str"]  # Word column renders HTML
 
+# Keep crimson error highlights distinct from the theme's primary colour.
+THEME = gr.themes.Default(primary_hue=gr.themes.colors.blue)
+
+# Gradio uses an editing cursor for Dataframe cells even when interactive=False.
+# Header buttons retain their normal cursor.
+CSS = """
+.readonly-table td,
+.readonly-table td .cell-wrap,
+.readonly-table td .cell-wrap span {
+    cursor: default !important;
+}
+"""
+
 
 def resolve_target(sentence_choice: str | None, custom_text: str) -> tuple[str | None, TargetSource]:
-    """Free-text input wins over the preset dropdown when both are filled
-    (docs/design_ui.md §1). Neither filled means no target text (free
-    practice, no WER gate)."""
+    """Prefer free text over a preset; return no target for free practice."""
     custom_text = (custom_text or "").strip()
     if custom_text:
         return custom_text, "custom"
@@ -40,19 +48,12 @@ def resolve_target(sentence_choice: str | None, custom_text: str) -> tuple[str |
 
 
 def _report_word_spans(report: DiagnosisReport) -> list[tuple[list[str], int]] | None:
-    """Recompute (word_phonemes, start_offset) for each word, the same way
-    Pipeline.diagnose() builds word spans internally -- DiagnosisReport
-    doesn't store them (docs/design_ui.md §11 records why this is
-    recomputed here instead of extending that data contract: a UI-only
-    display need shouldn't grow the core detection type). Best-effort: None
-    if g2p can't reproduce it, so the table just falls back to plain words.
-    """
+    """Rebuild word phoneme offsets for optional grapheme highlighting."""
     base_text = report.target_text if report.target_text is not None else report.transcript
     try:
-        # Pass base_text as-is: Pipeline.diagnose() does not lowercase before
-        # g2p, and espeak is case-sensitive for some words (US/us, Polish/polish).
+        # Match Pipeline.diagnose(): espeak can treat casing as pronunciation.
         raw_spans = to_phonemes_by_word(base_text)
-    except Exception:
+    except (OSError, RuntimeError, ValueError):
         return None
     spans: list[tuple[list[str], int]] = []
     offset = 0
@@ -66,9 +67,7 @@ def _report_word_spans(report: DiagnosisReport) -> list[tuple[list[str], int]] |
 def _word_phonemes_at(
     word_spans: list[tuple[list[str], int]] | None, position: int
 ) -> tuple[list[str], int] | None:
-    """The (word_phonemes, local_index) containing global reference index
-    `position`, or None if word_spans is unavailable or position falls
-    outside every span (defensive)."""
+    """Find the word and local index for a reference-phoneme position."""
     if word_spans is None:
         return None
     for phones, offset in word_spans:
@@ -94,10 +93,7 @@ def _highlight_span(word: str, span: tuple[int, int], style: str) -> str:
 
 
 def _word_cell_html(error: PhonemeError, word_spans: list[tuple[list[str], int]] | None) -> str:
-    """The Word column's content: the spelled word with the letters behind
-    the error highlighted, when locate_grapheme can place them; otherwise
-    (or for an insertion, whose extra sound isn't tied to any letter) plain
-    text, optionally with a "+/x/" suffix for what was added."""
+    """Format a word with its erroneous grapheme or inserted phone marked."""
     word = error.word or "-"
     if error.op == "insertion":
         escaped = html.escape(word)
@@ -122,16 +118,15 @@ def _actual_cell(error: PhonemeError) -> str:
     return f"/{error.actual}/" if error.actual else "-"
 
 
-def _errors_to_dataframe(diagnosis: Diagnosis | None) -> list[list]:
+def _errors_to_dataframe(diagnosis: Diagnosis | None) -> list[list[str | int]]:
+    """Format detected errors as rows for the Gradio results table."""
     if diagnosis is None:
         return []
     word_spans = _report_word_spans(diagnosis.report)
-    rows = []
+    rows: list[list[str | int]] = []
     for i, error in enumerate(diagnosis.report.errors, start=1):
         if error.possibly_misread:
-            # Soft phrasing: the transcript may itself be a mis-transcription
-            # (observed with Whisper on the P01 trial), so this isn't a
-            # confident claim about what the learner actually said.
+            # Whisper may be wrong, so avoid claiming what the learner said.
             misread = (
                 f'≠ transcript ("{error.misread_as}"?)'
                 if error.misread_as
@@ -153,6 +148,7 @@ def _errors_to_dataframe(diagnosis: Diagnosis | None) -> list[list]:
 
 
 def _transcript_markdown(state: TrialState) -> str:
+    """Summarize the transcript and reading-validation result."""
     if state.stage == "reading_mismatch" and state.reading_mismatch is not None:
         v = state.reading_mismatch.validation
         return (
@@ -181,6 +177,7 @@ def _log_status_markdown(state: TrialState) -> str:
 
 
 def build_app(models: AppModels) -> gr.Blocks:
+    """Build the single-session Gradio trial interface."""
     session_trial_count = {"n": 0}
 
     def on_run(participant_id, l1, sentence_choice, custom_text, audio_path):
@@ -211,7 +208,7 @@ def build_app(models: AppModels) -> gr.Blocks:
     def on_clear():
         return None, "", "", [], "", ""
 
-    with gr.Blocks(title="Pronunciation Coach — User Trial") as demo:
+    with gr.Blocks(title="Pronunciation Coach — User Trial", theme=THEME, css=CSS) as demo:
         gr.Markdown("# Pronunciation Coach — User Trial")
 
         with gr.Row():
@@ -234,7 +231,13 @@ def build_app(models: AppModels) -> gr.Blocks:
             placeholder="",
         )
 
-        audio = gr.Audio(sources=["microphone"], type="filepath", label="Recording")
+        # Participants re-record mistakes instead of editing the waveform.
+        audio = gr.Audio(
+            sources=["microphone"],
+            type="filepath",
+            label="Recording (use ✕ to re-record)",
+            editable=False,
+        )
 
         with gr.Row():
             run_button = gr.Button("▶ Run", variant="primary")
@@ -243,7 +246,11 @@ def build_app(models: AppModels) -> gr.Blocks:
         status = gr.Markdown()
         transcript_display = gr.Markdown()
         results_table = gr.Dataframe(
-            headers=RESULT_HEADERS, datatype=RESULT_DATATYPES, label="Detected errors"
+            headers=RESULT_HEADERS,
+            datatype=RESULT_DATATYPES,
+            label="Detected errors",
+            interactive=False,
+            elem_classes=["readonly-table"],
         )
         explanation = gr.Markdown(label="Explanation")
         log_status = gr.Markdown()

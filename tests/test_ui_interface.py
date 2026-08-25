@@ -135,6 +135,17 @@ def test_errors_to_dataframe_falls_back_to_plain_word_when_g2p_unavailable(monke
     assert rows[0][1] == "this"  # plain, no <span>
 
 
+def test_errors_to_dataframe_propagates_unexpected_g2p_errors(monkeypatch):
+    def boom(text):
+        raise TypeError("unexpected implementation error")
+
+    monkeypatch.setattr(interface_module, "to_phonemes_by_word", boom)
+    diagnosis = make_diagnosis([PhonemeError("substitution", "ð", "d", 0, "this")])
+
+    with pytest.raises(TypeError, match="unexpected implementation error"):
+        _errors_to_dataframe(diagnosis)
+
+
 def test_errors_to_dataframe_falls_back_to_plain_word_when_position_unlocatable():
     """position=99 doesn't fall inside any recomputed word span."""
     diagnosis = make_diagnosis([PhonemeError("substitution", "ð", "d", 99, "this")])
@@ -219,7 +230,6 @@ def test_transcript_markdown_shows_reading_mismatch_details():
 
 
 # --- _log_status_markdown ---
-
 
 def test_log_status_markdown_empty_while_running_or_detected():
     assert _log_status_markdown(TrialState(stage="running", status_message="")) == ""
