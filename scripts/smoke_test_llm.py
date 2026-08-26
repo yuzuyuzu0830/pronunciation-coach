@@ -1,52 +1,46 @@
+"""Smoke-test the production Ollama explainer with a known phoneme error."""
+
+from __future__ import annotations
+
 import argparse
 import sys
+from pathlib import Path
 
 import requests
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-DEFAULT_MODEL = "llama3.2:3b"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
-# Prompt embeds a known detection result so the LLM explains only;
-# it must not be asked to discover errors from audio or raw transcripts.
-DEFAULT_PROMPT = (
-    'You are a pronunciation coach. A Japanese learner of English pronounced '
-    '"this" as /d ɪ s/ instead of /ð ɪ s/. Briefly explain the error and how '
-    "to fix it, in simple language."
+from pronunciation_coach.explainer import OllamaExplainer  # noqa: E402
+from pronunciation_coach.types import DiagnosisReport, PhonemeError  # noqa: E402
+from ui import config  # noqa: E402
+
+SMOKE_REPORT = DiagnosisReport(
+    transcript="this",
+    target_text="this",
+    reference_phonemes=["ð", "ɪ", "s"],
+    hypothesis_phonemes=["d", "ɪ", "s"],
+    errors=[PhonemeError("substitution", "ð", "d", 0, "this")],
+    learner_l1=config.DEFAULT_L1,
 )
-
-
-def generate(prompt: str, model: str) -> str:
-    """Call Ollama once and return the generated explanation text."""
-    response = requests.post(
-        OLLAMA_URL,
-        json={"model": model, "prompt": prompt, "stream": False},
-        timeout=120,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    if "response" not in payload:
-        raise KeyError(
-            f"Ollama response missing 'response' field: {sorted(payload)}"
-        )
-    return payload["response"]
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Smoke-test Ollama explanation generation for MDD feedback."
     )
-    parser.add_argument("--prompt", default=DEFAULT_PROMPT)
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--model", default=config.OLLAMA_MODEL)
     args = parser.parse_args()
 
+    explainer = OllamaExplainer(
+        model=args.model,
+        base_url=config.OLLAMA_BASE_URL,
+        prompt_version=config.PROMPT_VERSION,
+    )
     try:
-        text = generate(args.prompt, args.model)
-    except requests.exceptions.ConnectionError:
-        print(
-            "Cannot connect to Ollama at http://localhost:11434. "
-            "Start the server (e.g. `ollama serve`) and pull the model first.",
-            file=sys.stderr,
-        )
+        text = explainer.explain(SMOKE_REPORT)
+    except ConnectionError as e:
+        print(e, file=sys.stderr)
         sys.exit(1)
     except requests.exceptions.HTTPError as exc:
         print(f"Ollama HTTP error: {exc}", file=sys.stderr)
