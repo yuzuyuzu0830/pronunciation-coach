@@ -1,9 +1,4 @@
-"""Machine check that every phoneme the trial sentences can produce has a
-hint (same style as pronunciation_coach/knowledge_data's practice_words
-verification): a symbol missing here silently degrades to a bare "/x/" in
-the UI rather than failing loudly, so this must be checked mechanically
-whenever ui/sentences.py changes.
-"""
+"""Checks for the phoneme-to-grapheme highlighting table."""
 
 import pytest
 
@@ -32,20 +27,10 @@ def test_all_trial_sentence_phonemes_have_a_hint():
     assert not missing, f"phonemes with no hint: {sorted(missing)}"
 
 
-def test_phoneme_hints_have_non_empty_example_and_grapheme():
+def test_phoneme_hints_have_non_empty_graphemes():
     for symbol, hint in PHONEME_HINTS.items():
-        assert hint.example.strip(), f"{symbol!r} has an empty example"
         assert hint.grapheme.strip(), f"{symbol!r} has an empty grapheme"
 
-
-# --- locate_grapheme ---
-#
-# Real g2p output (verified 2026-07-24):
-#   thank  -> [θ, æ, ŋ, k]
-#   king   -> [k, ɪ, ŋ]
-#   see    -> [s, iː]
-#   think  -> [θ, ɪ, ŋ, k]
-#   though -> [ð, oʊ]
 
 
 def test_locate_grapheme_basic_consonant_digraph():
@@ -71,7 +56,7 @@ def test_locate_grapheme_ee_digraph():
 
 
 def test_locate_grapheme_disambiguates_repeated_same_phoneme_by_order():
-    """A synthetic (not-necessarily-real) word/phoneme pairing chosen to
+    """A synthetic word/phoneme pairing chosen to
     exercise the disambiguation heuristic itself: "n" occurs twice in both
     the phoneme sequence and the spelling, in the same left-to-right order,
     so each occurrence should resolve to its own position."""
@@ -87,7 +72,7 @@ def test_locate_grapheme_disambiguates_repeated_same_phoneme_by_order():
 def test_locate_grapheme_returns_none_for_irregular_spelling():
     """"though" is /ðoʊ/: the "oʊ" sound isn't spelled with the table's
     typical grapheme ("oa"), so the substring count (0) can't be matched
-    against the phoneme count (1) -- must fall back to None, not a guess."""
+    against the phoneme count (1); must fall back to None, not a guess."""
     word_phonemes = ["ð", "oʊ"]
     assert locate_grapheme("though", "oʊ", 1, word_phonemes) is None
 
@@ -103,7 +88,7 @@ def test_locate_grapheme_returns_none_for_index_out_of_range():
 
 def test_locate_grapheme_returns_none_when_index_does_not_match_phoneme():
     """Defensive: the caller passed an index/phoneme pair that don't agree
-    with word_phonemes -- this indicates a bug upstream, not something to
+    with word_phonemes. This indicates a bug upstream, not something to
     silently paper over with a wrong highlight."""
     assert locate_grapheme("thank", "æ", 0, ["θ", "æ", "ŋ", "k"]) is None
 

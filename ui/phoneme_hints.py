@@ -1,9 +1,4 @@
-"""Language-neutral example words and graphemes for English phonemes.
-
-UI phrasing belongs to `phoneme_hint_format.py`. Coverage is intentionally
-limited to trial and common phonemes; unknown symbols render without a hint.
-Keys use the canonical symbols produced by `g2p.normalize()`.
-"""
+"""Typical graphemes used to highlight English phonemes in target words."""
 
 from __future__ import annotations
 
@@ -12,58 +7,57 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class PhonemeHint:
-    example: str  # an English word containing the sound
-    grapheme: str  # the spelling in that word usually associated with the sound
+    grapheme: str
 
 
 PHONEME_HINTS: dict[str, PhonemeHint] = {
     # Consonants
-    "b": PhonemeHint("bed", "b"),
-    "d": PhonemeHint("dog", "d"),
-    "dʒ": PhonemeHint("job", "j"),
-    "f": PhonemeHint("fish", "f"),
-    "ɡ": PhonemeHint("go", "g"),
-    "h": PhonemeHint("hat", "h"),
-    "j": PhonemeHint("yes", "y"),
-    "k": PhonemeHint("key", "k"),
-    "l": PhonemeHint("light", "l"),
-    "m": PhonemeHint("man", "m"),
-    "n": PhonemeHint("nice", "n"),
-    "ŋ": PhonemeHint("king", "ng"),
-    "p": PhonemeHint("pen", "p"),
-    "ɹ": PhonemeHint("red", "r"),
-    "ɾ": PhonemeHint("butter", "tt"),  # American flap: t/d between vowels
-    "s": PhonemeHint("sun", "s"),
-    "ʃ": PhonemeHint("shoe", "sh"),
-    "t": PhonemeHint("top", "t"),
-    "tʃ": PhonemeHint("chair", "ch"),
-    "v": PhonemeHint("van", "v"),
-    "w": PhonemeHint("water", "w"),
-    "z": PhonemeHint("zoo", "z"),
-    "ʒ": PhonemeHint("measure", "s"),
-    "ð": PhonemeHint("this", "th"),
-    "θ": PhonemeHint("think", "th"),
+    "b": PhonemeHint("b"),
+    "d": PhonemeHint("d"),
+    "dʒ": PhonemeHint("j"),
+    "f": PhonemeHint("f"),
+    "ɡ": PhonemeHint("g"),
+    "h": PhonemeHint("h"),
+    "j": PhonemeHint("y"),
+    "k": PhonemeHint("k"),
+    "l": PhonemeHint("l"),
+    "m": PhonemeHint("m"),
+    "n": PhonemeHint("n"),
+    "ŋ": PhonemeHint("ng"),
+    "p": PhonemeHint("p"),
+    "ɹ": PhonemeHint("r"),
+    "ɾ": PhonemeHint("tt"),  # American flap: t/d between vowels
+    "s": PhonemeHint("s"),
+    "ʃ": PhonemeHint("sh"),
+    "t": PhonemeHint("t"),
+    "tʃ": PhonemeHint("ch"),
+    "v": PhonemeHint("v"),
+    "w": PhonemeHint("w"),
+    "z": PhonemeHint("z"),
+    "ʒ": PhonemeHint("s"),
+    "ð": PhonemeHint("th"),
+    "θ": PhonemeHint("th"),
     # Vowels and diphthongs
-    "aɪ": PhonemeHint("time", "i"),
-    "aʊ": PhonemeHint("house", "ou"),
-    "eɪ": PhonemeHint("day", "ay"),
-    "i": PhonemeHint("happy", "y"),
-    "iː": PhonemeHint("see", "ee"),
-    "oʊ": PhonemeHint("boat", "oa"),
-    "uː": PhonemeHint("blue", "ue"),
-    "æ": PhonemeHint("cat", "a"),
-    "ə": PhonemeHint("about", "a"),
-    "əl": PhonemeHint("table", "le"),  # syllabic l
-    "ɚ": PhonemeHint("teacher", "er"),
-    "ɑːɹ": PhonemeHint("car", "ar"),
-    "ɔ": PhonemeHint("dog", "o"),
-    "ɔː": PhonemeHint("law", "aw"),
-    "ɔːɹ": PhonemeHint("door", "or"),
-    "ɛ": PhonemeHint("bed", "e"),
-    "ɪ": PhonemeHint("sit", "i"),
-    "ɪɹ": PhonemeHint("near", "ear"),
-    "ʊ": PhonemeHint("book", "oo"),
-    "ʌ": PhonemeHint("cup", "u"),
+    "aɪ": PhonemeHint("i"),
+    "aʊ": PhonemeHint("ou"),
+    "eɪ": PhonemeHint("ay"),
+    "i": PhonemeHint("y"),
+    "iː": PhonemeHint("ee"),
+    "oʊ": PhonemeHint("oa"),
+    "uː": PhonemeHint("ue"),
+    "æ": PhonemeHint("a"),
+    "ə": PhonemeHint("a"),
+    "əl": PhonemeHint("le"),  # syllabic l
+    "ɚ": PhonemeHint("er"),
+    "ɑːɹ": PhonemeHint("ar"),
+    "ɔ": PhonemeHint("o"),
+    "ɔː": PhonemeHint("aw"),
+    "ɔːɹ": PhonemeHint("or"),
+    "ɛ": PhonemeHint("e"),
+    "ɪ": PhonemeHint("i"),
+    "ɪɹ": PhonemeHint("ear"),
+    "ʊ": PhonemeHint("oo"),
+    "ʌ": PhonemeHint("u"),
 }
 
 
