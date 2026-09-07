@@ -1,17 +1,29 @@
+import importlib.util
 import re
+from pathlib import Path
 
 import pytest
 
 from pronunciation_coach.explainer import (
+    NO_ERRORS_MESSAGE,
     ZERO_M_HEADING,
     ZERO_M_PREAMBLE,
     OllamaExplainer,
+    _should_skip_llm,
     build_prompt,
     format_facts_only_error,
     rank_errors_by_tier,
     render_facts_only_section,
 )
 from pronunciation_coach.types import DiagnosisReport, PhonemeError
+
+
+_SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "compare_explanations.py"
+_SPEC = importlib.util.spec_from_file_location("compare_explanations_script", _SCRIPT_PATH)
+if _SPEC is None or _SPEC.loader is None:
+    raise ImportError(f"Cannot load {_SCRIPT_PATH}")
+compare_explanations = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(compare_explanations)
 
 
 def make_report(errors: list[PhonemeError]) -> DiagnosisReport:
@@ -603,15 +615,102 @@ def test_v3_explain_still_calls_the_llm_when_m_is_nonzero(monkeypatch):
     assert captured["calls"] == 1
 
 
-def test_v3_explain_still_calls_the_llm_when_no_error_was_detected(monkeypatch):
-    """No errors at all is not M=0: there is no facts-only material to show,
-    and the prompt asks for praise, so the call must stay."""
+def test_v3_explain_does_not_call_the_llm_when_no_error_was_detected(monkeypatch):
+    """No errors was excluded because it is not M=0, has no facts-only
+    material, and the prompt asks only for praise."""
     captured = {}
     _fake_ollama(monkeypatch, captured)
     explainer = OllamaExplainer(prompt_version="v3")
     out = explainer.explain(make_v3_report([]))
+    assert captured["calls"] == 0
+    assert out == NO_ERRORS_MESSAGE
+
+
+def test_should_skip_llm_is_true_with_no_errors_and_no_misread():
+    assert _should_skip_llm(make_v3_report([]), "v3", 3)
+
+
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_should_skip_llm_is_false_with_no_errors_on_v1_and_v2(version):
+    assert not _should_skip_llm(make_v3_report([]), version, 3)
+
+
+def test_v3_explain_with_no_errors_returns_the_no_errors_message(monkeypatch):
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3")
+    report = make_v3_report([])
+
+    outputs = [explainer.explain(report) for _ in range(5)]
+
+    assert outputs == [NO_ERRORS_MESSAGE] * 5
+    assert captured["calls"] == 0
+
+
+def test_v3_explain_with_no_errors_ignores_a_leaky_llm_response(monkeypatch):
+    captured = {}
+    _fake_ollama(monkeypatch, captured, response=_LEAKY_RESPONSE)
+    explainer = OllamaExplainer(prompt_version="v3")
+    out = explainer.explain(make_v3_report([]))
+
+    assert not re.search(r"(?m)^\s*\d+[.)]\s", out)
+    assert "reading mistake" not in out.lower()
+    assert not re.search(r"\[[^]]+\]", out)
+    assert captured["calls"] == 0
+
+
+def test_no_errors_message_reports_detection_without_claiming_correctness():
+    lowered = NO_ERRORS_MESSAGE.lower()
+    for banned in (
+        "perfect",
+        "correct",
+        "accurate",
+        "flawless",
+        "no mistakes",
+        "native",
+        "accent",
+    ):
+        assert banned not in lowered
+    assert "detected" in lowered
+    assert NO_ERRORS_MESSAGE.isascii()
+    assert "!" not in NO_ERRORS_MESSAGE
+
+
+def test_no_errors_output_does_not_use_the_zero_m_preamble(monkeypatch):
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3")
+    out = explainer.explain(make_v3_report([]))
+
+    assert ZERO_M_PREAMBLE not in out
+    assert ZERO_M_HEADING not in out
+
+
+def test_v3_explain_calls_the_llm_when_only_misreads_are_detected(monkeypatch):
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    explainer = OllamaExplainer(prompt_version="v3")
+    report = make_v3_report(MISREAD_ERRORS)
+
+    out = explainer.explain(report)
+
     assert captured["calls"] == 1
+    assert "Possible reading mistakes" in captured["prompt"]
+    assert report.transcript in captured["prompt"]
     assert out == "LLM TEXT"
+
+
+def test_no_errors_fixture_bypasses_the_llm(monkeypatch):
+    captured = {}
+    _fake_ollama(monkeypatch, captured)
+    fixture_path = compare_explanations.FIXTURES_DIR / "e2e_no_errors.json"
+    report = compare_explanations.load_report(fixture_path)
+    explainer = OllamaExplainer(prompt_version="v3")
+
+    out = explainer.explain(report)
+
+    assert captured["calls"] == 0
+    assert out == NO_ERRORS_MESSAGE
 
 
 def test_v2_explain_still_calls_the_llm_at_zero_m(monkeypatch):

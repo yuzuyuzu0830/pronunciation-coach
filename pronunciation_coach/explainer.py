@@ -167,6 +167,13 @@ ZERO_M_PREAMBLE = (
     "reference information."
 )
 
+# Unlike M=0, no-error output has no detected differences to list. Report the
+# detection result and encourage practice without claiming correct pronunciation.
+NO_ERRORS_MESSAGE = (
+    "No pronunciation errors were detected in this attempt.\n"
+    "Keep practising."
+)
+
 
 def render_facts_only_section(
     errors: list[PhonemeError], *, heading: str = FACTS_ONLY_HEADING
@@ -305,13 +312,18 @@ def _should_skip_llm(
 
     At M=0, the 2026-08-23 run produced unsupported numbered items and
     reading-mistake sections. The deterministic facts-only block did not, so
-    it replaces the LLM call. Reports with misreads still need word-level
-    coaching and remain eligible for the LLM.
+    it replaces the LLM call. A no-error report produced the same unsupported content.
+    Reports with misreads still need word-level coaching and remain eligible for the LLM.
     """
     _require_non_negative_limit(full_explanation_limit)
+    uses_structured_knowledge = version == "v3"
     if any(error.possibly_misread for error in report.errors):
         return False
-    return _is_zero_m(version == "v3", report.errors, report, full_explanation_limit)
+    if uses_structured_knowledge and not report.errors:
+        return True
+    return _is_zero_m(
+        uses_structured_knowledge, report.errors, report, full_explanation_limit
+    )
 
 
 def build_prompt(
@@ -418,11 +430,15 @@ class OllamaExplainer:
     def explain(self, report: DiagnosisReport) -> str:
         """Generate coaching text, bypassing the LLM for facts-only v3 output."""
         if _should_skip_llm(report, self._prompt_version, self._full_explanation_limit):
-            # M=0 always has at least one facts-only error here.
-            return ZERO_M_PREAMBLE + "\n\n" + render_facts_only_section(
+            section = render_facts_only_section(
                 _facts_only_errors(report, self._full_explanation_limit),
                 heading=ZERO_M_HEADING,
             )
+            # Nothing to list means nothing was detected at all.
+            # the M=0 preamble would assert differences that do not exist.
+            if not section:
+                return NO_ERRORS_MESSAGE
+            return ZERO_M_PREAMBLE + "\n\n" + section
         prompt = build_prompt(
             report,
             version=self._prompt_version,

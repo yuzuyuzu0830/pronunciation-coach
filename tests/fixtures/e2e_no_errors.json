@@ -1,0 +1,9 @@
+{
+  "_comment": "E2E real data (P03, 2026-09-07, whisper small + wav2vec2-lv-60, commit c276208). Existing four fixtures all contain at least one error, so the no-error path was previously uncovered.",
+  "transcript": "I have some tea in my room.",
+  "target_text": "I have some tea in my room.",
+  "reference_phonemes": ["aɪ", "h", "æ", "v", "s", "ʌ", "m", "t", "iː", "ɪ", "n", "m", "aɪ", "ɹ", "uː", "m"],
+  "hypothesis_phonemes": ["aɪ", "h", "æ", "v", "s", "ʌ", "m", "t", "iː", "ɪ", "n", "m", "aɪ", "ɹ", "uː", "m"],
+  "errors": [],
+  "learner_l1": "Japanese"
+}
