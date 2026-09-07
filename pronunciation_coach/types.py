@@ -1,6 +1,6 @@
 """Shared data contracts for the pronunciation coaching pipeline.
 
-See docs/design.md §3. Detection stays on the acoustic-model side;
+Detection stays on the acoustic-model side;
 the LLM receives only these structured results and never performs detection.
 """
 
@@ -25,7 +25,7 @@ class PhonemeError:
     position: int  # index into the reference phonemes (insertion: preceding index)
     word: str | None  # word the error belongs to, when attributable
     # Set when reading validation saw a different word here: the learner likely
-    # read another word, so phoneme-level coaching would mislead (design.md §6).
+    # read another word, so phoneme-level coaching would mislead.
     possibly_misread: bool = False
     misread_as: str | None = None  # transcript word actually read (None: omitted)
 
@@ -95,7 +95,7 @@ PipelineResult = CoachingResult | ReadingMismatch
 @dataclass(frozen=True)
 class PracticeWord:
     word: str
-    target_phoneme: str  # verified by test against g2p.to_phonemes (docs/design_3c.md §1)
+    target_phoneme: str  # verified by test against g2p.to_phonemes
 
 
 @dataclass(frozen=True)

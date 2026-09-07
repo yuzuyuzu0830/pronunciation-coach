@@ -1,7 +1,7 @@
 """Gradio layout, result formatting, and event wiring.
 
-Model-backed Blocks wiring is covered by the manual E2E check in
-docs/design_ui.md; the formatting helpers are unit-tested directly.
+Model-backed Blocks wiring is covered by the manual E2E check;
+the formatting helpers are unit-tested directly.
 """
 
 from __future__ import annotations

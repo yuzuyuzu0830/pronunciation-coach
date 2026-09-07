@@ -1,6 +1,5 @@
-"""Markdown report rendering for a detection evaluation run (docs/design_eval.md §4).
-
-Pure string formatting only -- callers handle writing the file.
+"""Markdown report rendering for a detection evaluation run.
+Pure string formatting only.
 """
 
 from __future__ import annotations

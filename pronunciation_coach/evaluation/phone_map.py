@@ -1,8 +1,8 @@
 """Map SpeechOcean762 ARPAbet positions to the system's espeak IPA reference.
 
 Unlike `g2p.EQUIVALENCE_CLASSES`, this evaluation-only mapping accepts
-canonical-pronunciation differences between transcription systems. The table
-is provisional pending validation against corpus samples.
+canonical-pronunciation differences between transcription systems.
+The table is provisional pending validation against corpus samples.
 """
 
 from __future__ import annotations

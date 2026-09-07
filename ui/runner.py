@@ -75,9 +75,7 @@ def run_trial(
     """Run one trial, yielding a TrialState at each stage.
 
     The last yielded state is always terminal (stage != "running"/"detected")
-    and has already been logged (or logged=False with log_error set, if
-    logging itself failed -- the trial's own outcome is never hidden behind
-    a logging failure).
+    and has already been logged.
     """
     participant_id = participant_id.strip()
     timings: dict[str, float] = {}

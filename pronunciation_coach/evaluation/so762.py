@@ -1,7 +1,7 @@
 """speechocean762 ground-truth parsing for the detection evaluation .
 
 The parser follows the corpus's Kaldi-recipe layout and raises on malformed
-fields instead of guessing (docs/design_eval.md §7).
+fields instead of guessing.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-ACCURACY_THRESHOLD_DEFAULT = 0.5  # design_eval.md §1.2: accuracy < 0.5 counts as mispronounced
+ACCURACY_THRESHOLD_DEFAULT = 0.5  # accuracy < 0.5 counts as mispronounced
 
 
 @dataclass(frozen=True)
@@ -33,7 +33,7 @@ class WordAnnotation:
 class UtteranceAnnotation:
     utt_id: str
     speaker_id: str
-    text: str  # as given by the corpus (uppercase); lower() before passing to g2p (§6 issue 7)
+    text: str  # as given by the corpus (uppercase); lower() before passing to g2p
     words: list[WordAnnotation]
 
 
