@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from pronunciation_coach.g2p import (
@@ -222,3 +224,65 @@ def test_to_phonemes_by_word_recovers_real_word_boundary_loss(text):
     result = to_phonemes_by_word(text)
     assert [word for word, _ in result] == text.split()
     assert all(phones for _, phones in result)
+
+@requires_espeak
+@pytest.mark.parametrize(
+    "word",
+    [
+        "blicket",  # nonce words: no dictionary can contain these
+        "sprindle",
+        "wug",
+        "Yuki",  # proper nouns, incl. the trial sentences' retired ones
+        "Tokyo",
+        "NASA",  # acronyms
+        "FBI",
+    ],
+)
+def test_to_phonemes_by_word_resolves_out_of_vocabulary_words(word):
+    """espeak-ng is rule-based, so nonce words, proper nouns and acronyms
+    all phonemize to exactly one non-empty group."""
+    assert to_phonemes_by_word(word) == [(word, to_phonemes(word))]
+    assert to_phonemes(word)
+
+
+@requires_espeak
+@pytest.mark.parametrize(
+    "text, bad_token",
+    [
+        ("I paid 250 dollars", "250"),  # numbers expand to several words
+        ("It was 1999", "1999"),
+        ("Meet me at 3:30", "3:30"),
+        ("e.g. this", "e.g"),  # abbreviation with an internal period
+        ("same.i something", "same.i"),  # the corpus's missing sentence break
+    ],
+)
+def test_to_phonemes_by_word_rejects_multi_word_expansions(text, bad_token):
+    """The one thing rule-based resolution cannot give us. 
+    A number or dotted abbreviation expands to several words, which
+    the per-word fallback cannot fix either.
+    """
+    with pytest.raises(ValueError, match=re.escape(repr(bad_token))):
+        to_phonemes_by_word(text)
+
+
+@requires_espeak
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Known limitation, found 2026-08-16 while adding the OOV probe: the "
+        "guard compares word count against group count, so two errors that "
+        "cancel out slip through. In 'e.g. this one', 'e.g.' over-expands to "
+        "2 groups while 'this one' loses its boundary and merges to 1, giving "
+        "3 groups for 3 words. The counts agree, no fallback fires, and "
+        "phonemes are silently attributed to the wrong words: e.g->[iː], "
+        "this->[dʒ,iː] (the 'g'), one->[ð,ɪ,s,w,ʌ,n] ('this one'). Every "
+        "downstream consumer of PhonemeError.word is then wrong. A real fix "
+        "must verify each token's group count individually rather than the "
+        "totals; remove this marker when that lands."
+    ),
+)
+def test_to_phonemes_by_word_rejects_compensating_group_count_errors():
+    """A token that over-expands must be rejected even when another token's
+    lost boundary makes the totals match."""
+    with pytest.raises(ValueError, match=re.escape(repr("e.g"))):
+        to_phonemes_by_word("e.g. this one")
