@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import pytest
 
 from pronunciation_coach.g2p import normalize, to_phonemes_by_word
 from ui.sentences import (
     RETIRED_PRESET_TEXTS,
     TRIAL_SENTENCES,
+    TrialSentence,
     resolve_trial_sentence,
 )
 
@@ -11,31 +14,33 @@ try:
     from phonemizer.backend import EspeakBackend
 
     ESPEAK_AVAILABLE = EspeakBackend.is_available()
-except Exception:
+except (ImportError, OSError):
     ESPEAK_AVAILABLE = False
 
-requires_espeak = pytest.mark.skipif(not ESPEAK_AVAILABLE, reason="espeak-ng is not installed")
+requires_espeak = pytest.mark.skipif(
+    not ESPEAK_AVAILABLE, reason="espeak-ng is not installed"
+)
 
 
-def test_trial_sentences_list_is_non_empty():
+def _sentence_id(sentence: TrialSentence) -> str:
+    return sentence.text
+
+
+def test_trial_sentences_include_at_least_five_entries() -> None:
     assert len(TRIAL_SENTENCES) >= 5
 
 
-def test_trial_sentences_have_unique_text():
-    texts = [s.text for s in TRIAL_SENTENCES]
+def test_trial_sentences_have_unique_text() -> None:
+    texts = [sentence.text for sentence in TRIAL_SENTENCES]
     assert len(texts) == len(set(texts))
 
 
-def test_resolve_trial_sentence_finds_current_preset():
+def test_resolve_trial_sentence_finds_current_preset() -> None:
     sentence = TRIAL_SENTENCES[0]
     assert resolve_trial_sentence(sentence.text) is sentence
 
 
-def test_resolve_trial_sentence_maps_retired_control_2_to_current_control():
-    """P01 trial_log.jsonl still has the pre-rename control sentence 2 text.
-    Analysis that maps target_text -> TrialSentence must treat it as the
-    same control (empty target_phonemes), not as an unknown custom sentence.
-    """
+def test_resolve_trial_sentence_maps_retired_control_2_to_current_control() -> None:
     old_text = "My name is Yuki and I live in Tokyo."
     assert old_text in RETIRED_PRESET_TEXTS
     resolved = resolve_trial_sentence(old_text)
@@ -45,39 +50,33 @@ def test_resolve_trial_sentence_maps_retired_control_2_to_current_control():
     assert "control sentence 2" in resolved.note
 
 
-def test_resolve_trial_sentence_returns_none_for_unknown_text():
+def test_resolve_trial_sentence_returns_none_for_unknown_text() -> None:
     assert resolve_trial_sentence("not a trial sentence") is None
 
 
-def test_retired_preset_targets_are_not_in_current_list():
-    """Retired texts must stay out of the UI dropdown (TRIAL_SENTENCES) while
-    still being resolvable for log analysis."""
-    current = {s.text for s in TRIAL_SENTENCES}
+def test_retired_preset_targets_are_not_in_current_list() -> None:
+    current = {sentence.text for sentence in TRIAL_SENTENCES}
     for old_text, new_text in RETIRED_PRESET_TEXTS.items():
         assert old_text not in current
         assert new_text in current
 
 
 @requires_espeak
-@pytest.mark.parametrize("sentence", TRIAL_SENTENCES, ids=lambda s: s.text)
-def test_trial_sentence_phonemizes_without_error(sentence):
-    """Same mechanical check as knowledge_data's practice_words: a sentence
-    that can't survive g2p can't be used as a trial target text (it would
-    hit the WER-gate g2p path and never reach detection)."""
+@pytest.mark.parametrize("sentence", TRIAL_SENTENCES, ids=_sentence_id)
+def test_trial_sentence_phonemizes_without_error(sentence: TrialSentence) -> None:
     word_spans = to_phonemes_by_word(sentence.text)
     assert word_spans, f"{sentence.text!r} produced no words"
 
 
 @requires_espeak
 @pytest.mark.parametrize(
-    "sentence", [s for s in TRIAL_SENTENCES if s.target_phonemes], ids=lambda s: s.text
+    "sentence",
+    [sentence for sentence in TRIAL_SENTENCES if sentence.target_phonemes],
+    ids=_sentence_id,
 )
-def test_trial_sentence_contains_its_target_phonemes(sentence):
-    """Each non-control sentence's annotated target phonemes must actually
-    appear in its own phonemization (catches an annotation drifting out of
-    sync with the sentence text)."""
+def test_trial_sentence_contains_its_target_phonemes(sentence: TrialSentence) -> None:
     phonemes = normalize(
-        [p for _, phones in to_phonemes_by_word(sentence.text) for p in phones]
+        [phone for _, phones in to_phonemes_by_word(sentence.text) for phone in phones]
     )
     for target in sentence.target_phonemes:
         assert target in phonemes, (

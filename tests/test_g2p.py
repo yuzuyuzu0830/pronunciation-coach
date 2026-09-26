@@ -2,6 +2,7 @@ import re
 
 import pytest
 
+import pronunciation_coach.g2p as g2p_module
 from pronunciation_coach.g2p import (
     normalize,
     reset_espeak_backend_for_tests,
@@ -9,13 +10,12 @@ from pronunciation_coach.g2p import (
     to_phonemes_by_word,
     to_phonemes_by_word_many,
 )
-import pronunciation_coach.g2p as g2p_module
 
 try:
     from phonemizer.backend import EspeakBackend
 
     ESPEAK_AVAILABLE = EspeakBackend.is_available()
-except Exception:
+except (ImportError, OSError, RuntimeError):
     ESPEAK_AVAILABLE = False
 
 requires_espeak = pytest.mark.skipif(
@@ -26,86 +26,72 @@ requires_espeak = pytest.mark.skipif(
 @pytest.mark.parametrize(
     "phonemes, expected",
     [
-        # Empty input produces empty output.
-        ([], []),
-        # Plain phonemes pass through unchanged.
-        (["ð", "ɪ", "s"], ["ð", "ɪ", "s"]),
-        # Primary and secondary stress marks are stripped from elements.
-        (["ˈaɪ", "ˌb"], ["aɪ", "b"]),
-        # Stress marks embedded mid-element are stripped too.
-        (["ɹˈaɪt"], ["ɹaɪt"]),
-        # The length mark ː must be preserved (vowel-length errors matter
-        # for Japanese learners; docs/design.md §4).
-        (["uː", "ɑː"], ["uː", "ɑː"]),
-        # Length mark survives while stress on the same element is stripped.
-        (["ˈuː"], ["uː"]),
-        # Elements consisting only of stress marks are dropped entirely.
-        (["ˈ", "ə", "ˌ"], ["ə"]),
-        (["ˈ"], []),
+        pytest.param([], [], id="empty"),
+        pytest.param(["ð", "ɪ", "s"], ["ð", "ɪ", "s"], id="unchanged"),
+        pytest.param(["ˈaɪ", "ˌb"], ["aɪ", "b"], id="stress-marks"),
+        pytest.param(["ɹˈaɪt"], ["ɹaɪt"], id="embedded-stress"),
+        pytest.param(["uː", "ɑː"], ["uː", "ɑː"], id="length-marks"),
+        pytest.param(["ˈuː"], ["uː"], id="stress-and-length"),
+        pytest.param(["ˈ", "ə", "ˌ"], ["ə"], id="empty-elements"),
+        pytest.param(["ˈ"], [], id="only-stress"),
     ],
 )
-def test_normalize(phonemes, expected):
-    """normalize should strip stress marks, keep ː, and drop emptied elements."""
+def test_normalize(phonemes: list[str], expected: list[str]) -> None:
     assert normalize(phonemes) == expected
 
 
 @pytest.mark.parametrize(
     "phonemes, expected",
     [
-        # r and ɹ are notation variants of the same alveolar approximant in
-        # the espeak inventory; hypothesis output flips between them (measured
-        # in E2E), so both must map to the canonical ɹ.
-        (["r"], ["ɹ"]),
-        (["r", "aɪ", "t"], ["ɹ", "aɪ", "t"]),
-        # ɜː and ɚ are notation variants of the r-colored vowel (en-us);
-        # reference emits ɜː for e.g. "church" while hypothesis may emit ɚ.
-        (["ɜː"], ["ɚ"]),
-        (["tʃ", "ɜː", "tʃ"], ["tʃ", "ɚ", "tʃ"]),
-        # The canonical symbols themselves pass through unchanged.
-        (["ɹ", "ɚ"], ["ɹ", "ɚ"]),
-        # Symbols outside the equivalence classes must not be touched —
-        # especially learner-error contrasts like ð/d.
-        (["ð", "d", "ɪ", "s", "uː"], ["ð", "d", "ɪ", "s", "uː"]),
+        pytest.param(["r"], ["ɹ"], id="r"),
+        pytest.param(["r", "aɪ", "t"], ["ɹ", "aɪ", "t"], id="r-in-word"),
+        pytest.param(["ɜː"], ["ɚ"], id="rhotic-vowel"),
+        pytest.param(["tʃ", "ɜː", "tʃ"], ["tʃ", "ɚ", "tʃ"], id="rhotic-vowel-in-word"),
+        pytest.param(["ɹ", "ɚ"], ["ɹ", "ɚ"], id="canonical-symbols"),
+        pytest.param(
+            ["ð", "d", "ɪ", "s", "uː"],
+            ["ð", "d", "ɪ", "s", "uː"],
+            id="unrelated-symbols",
+        ),
     ],
 )
-def test_normalize_equivalence_classes(phonemes, expected):
-    """Phonetically equivalent notation variants map to one canonical symbol."""
+def test_normalize_equivalence_classes(
+    phonemes: list[str], expected: list[str]
+) -> None:
     assert normalize(phonemes) == expected
 
 
 @pytest.mark.parametrize(
     "phonemes, expected",
     [
-        # Stress stripping and equivalence mapping must compose: ˈr → r → ɹ.
-        (["ˈr"], ["ɹ"]),
-        (["ˌɜː"], ["ɚ"]),
-        (["ˈr", "ˌɜː", "ð"], ["ɹ", "ɚ", "ð"]),
+        pytest.param(["ˈr"], ["ɹ"], id="stressed-r"),
+        pytest.param(["ˌɜː"], ["ɚ"], id="stressed-rhotic-vowel"),
+        pytest.param(["ˈr", "ˌɜː", "ð"], ["ɹ", "ɚ", "ð"], id="mixed"),
     ],
 )
-def test_normalize_combines_stress_and_equivalence(phonemes, expected):
-    """Equivalence mapping applies after stress marks are stripped."""
+def test_normalize_combines_stress_and_equivalence(
+    phonemes: list[str], expected: list[str]
+) -> None:
     assert normalize(phonemes) == expected
 
 
 @requires_espeak
-def test_to_phonemes_keeps_diphthong_as_one_token():
-    """Diphthongs must stay single tokens, matching wav2vec2-espeak output."""
+def test_to_phonemes_keeps_diphthong_as_one_token() -> None:
     assert to_phonemes("high") == ["h", "aɪ"]
 
 
 @requires_espeak
-def test_to_phonemes_keeps_affricate_as_one_token():
+def test_to_phonemes_keeps_affricate_as_one_token() -> None:
     assert to_phonemes("church") == ["tʃ", "ɜː", "tʃ"]
 
 
 @requires_espeak
-def test_to_phonemes_flattens_multiple_words():
+def test_to_phonemes_flattens_multiple_words() -> None:
     assert to_phonemes("this high") == ["ð", "ɪ", "s", "h", "aɪ"]
 
 
 @requires_espeak
-def test_to_phonemes_by_word_returns_per_word_phonemes():
-    """Word boundaries must be preserved for error-to-word attribution."""
+def test_to_phonemes_by_word_returns_per_word_phonemes() -> None:
     assert to_phonemes_by_word("this high water") == [
         ("this", ["ð", "ɪ", "s"]),
         ("high", ["h", "aɪ"]),
@@ -114,52 +100,50 @@ def test_to_phonemes_by_word_returns_per_word_phonemes():
 
 
 @requires_espeak
-def test_to_phonemes_composes_with_normalize():
-    """normalize must keep the length mark ː and leave default output intact."""
+def test_to_phonemes_composes_with_normalize() -> None:
     phonemes = to_phonemes("water")
     assert normalize(phonemes) == phonemes
     assert "ɔː" in phonemes
 
 
 @requires_espeak
-def test_espeak_backend_is_reused_across_calls(monkeypatch):
-    """phonemizer docs: avoid re-initializing espeak on every phonemize call."""
+def test_espeak_backend_is_reused_across_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     reset_espeak_backend_for_tests()
     created = {"n": 0}
     real_backend = g2p_module.EspeakBackend
 
-    class TrackingBackend(real_backend):
-        def __init__(self, *args, **kwargs):
-            created["n"] += 1
-            super().__init__(*args, **kwargs)
+    def tracking_backend(language: str) -> EspeakBackend:
+        created["n"] += 1
+        return real_backend(language=language)
 
-    monkeypatch.setattr(g2p_module, "EspeakBackend", TrackingBackend)
+    monkeypatch.setattr(g2p_module, "EspeakBackend", tracking_backend)
 
-    to_phonemes("high")
-    to_phonemes("water")
-    to_phonemes_by_word("this is high")
-    assert created["n"] == 1
+    try:
+        to_phonemes("high")
+        to_phonemes("water")
+        to_phonemes_by_word("this is high")
+        assert created["n"] == 1
+    finally:
+        reset_espeak_backend_for_tests()
 
 
 @requires_espeak
-def test_to_phonemes_by_word_many_matches_single_calls():
+def test_to_phonemes_by_word_many_matches_single_calls() -> None:
     texts = ["this is high", "water"]
     batched = to_phonemes_by_word_many(texts)
     assert batched == [to_phonemes_by_word(t) for t in texts]
 
 
 @requires_espeak
-def test_to_phonemes_by_word_many_returns_value_error_per_bad_text(monkeypatch):
-    """One text whose fallback also fails must not prevent pairing the others."""
-
-    def fake_raw(texts: list[str]):
+def test_to_phonemes_by_word_many_returns_value_error_per_bad_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_raw(texts: list[str]) -> list[str]:
         if texts == ["this water", "water"]:
-            # Batched primary call: "this water" merges into one group
-            # (mismatch, triggers the per-word fallback); "water" is fine.
             return ["w ɔː ɾ ɚ", "w ɔː ɾ ɚ"]
         if texts == ["this", "water"]:
-            # Fallback for "this water": "this" itself yields two groups
-            # (unresolvable) -- ValueError must still be scoped to that text.
             return ["x|y", "w ɔː ɾ ɚ"]
         raise AssertionError(f"unexpected phonemize call: {texts}")
 
@@ -169,19 +153,17 @@ def test_to_phonemes_by_word_many_returns_value_error_per_bad_text(monkeypatch):
     assert results[1] == [("water", ["w", "ɔː", "ɾ", "ɚ"])]
 
 
-# --- word-boundary-loss fallback (docs/devlog.md 2026-07-22) ---
+# Word-boundary fallback
 
 
-def test_to_phonemes_by_word_falls_back_when_separator_is_dropped(monkeypatch):
-    """espeak-ng sometimes merges short function-word pairs into one group
-    (e.g. "did not" observed as a single group instead of two); falling back
-    to per-word phonemization must recover the correct word boundary."""
-
-    def fake_raw(texts: list[str]):
+def test_to_phonemes_by_word_falls_back_when_separator_is_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_raw(texts: list[str]) -> list[str]:
         if texts == ["did not"]:
-            return ["d ɪ d n ɑː t"]  # merged: one group for two words
+            return ["d ɪ d n ɑː t"]
         if texts == ["did", "not"]:
-            return ["d ɪ d", "n ɑː t"]  # per-word: correct
+            return ["d ɪ d", "n ɑː t"]
         raise AssertionError(f"unexpected phonemize call: {texts}")
 
     monkeypatch.setattr(g2p_module, "_phonemize_raw", fake_raw)
@@ -191,15 +173,14 @@ def test_to_phonemes_by_word_falls_back_when_separator_is_dropped(monkeypatch):
     ]
 
 
-def test_to_phonemes_by_word_raises_when_fallback_also_fails(monkeypatch):
-    """ValueError is raised only when even per-word phonemization can't
-    produce one group per word (not merely on the initial mismatch)."""
-
-    def fake_raw(texts: list[str]):
+def test_to_phonemes_by_word_raises_when_fallback_also_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_raw(texts: list[str]) -> list[str]:
         if texts == ["a b"]:
-            return ["x"]  # 1 group for 2 words -> triggers fallback
+            return ["x"]
         if texts == ["a", "b"]:
-            return ["x|y", "z"]  # "a" alone still yields 2 groups
+            return ["x|y", "z"]
         raise AssertionError(f"unexpected phonemize call: {texts}")
 
     monkeypatch.setattr(g2p_module, "_phonemize_raw", fake_raw)
@@ -217,30 +198,26 @@ def test_to_phonemes_by_word_raises_when_fallback_also_fails(monkeypatch):
         "where was the knife",
     ],
 )
-def test_to_phonemes_by_word_recovers_real_word_boundary_loss(text):
-    """Real espeak-ng integration check: these phrases were confirmed
-    (2026-07-22, against speechocean762) to merge word boundaries in a
-    single batched call; the fallback must still return one entry per word."""
+def test_to_phonemes_by_word_recovers_real_word_boundary_loss(text: str) -> None:
     result = to_phonemes_by_word(text)
     assert [word for word, _ in result] == text.split()
     assert all(phones for _, phones in result)
+
 
 @requires_espeak
 @pytest.mark.parametrize(
     "word",
     [
-        "blicket",  # nonce words: no dictionary can contain these
+        "blicket",
         "sprindle",
         "wug",
-        "Yuki",  # proper nouns, incl. the trial sentences' retired ones
+        "Yuki",
         "Tokyo",
-        "NASA",  # acronyms
+        "NASA",
         "FBI",
     ],
 )
-def test_to_phonemes_by_word_resolves_out_of_vocabulary_words(word):
-    """espeak-ng is rule-based, so nonce words, proper nouns and acronyms
-    all phonemize to exactly one non-empty group."""
+def test_to_phonemes_by_word_resolves_out_of_vocabulary_words(word: str) -> None:
     assert to_phonemes_by_word(word) == [(word, to_phonemes(word))]
     assert to_phonemes(word)
 
@@ -249,18 +226,16 @@ def test_to_phonemes_by_word_resolves_out_of_vocabulary_words(word):
 @pytest.mark.parametrize(
     "text, bad_token",
     [
-        ("I paid 250 dollars", "250"),  # numbers expand to several words
+        ("I paid 250 dollars", "250"),
         ("It was 1999", "1999"),
         ("Meet me at 3:30", "3:30"),
-        ("e.g. this", "e.g"),  # abbreviation with an internal period
-        ("same.i something", "same.i"),  # the corpus's missing sentence break
+        ("e.g. this", "e.g"),
+        ("same.i something", "same.i"),
     ],
 )
-def test_to_phonemes_by_word_rejects_multi_word_expansions(text, bad_token):
-    """The one thing rule-based resolution cannot give us. 
-    A number or dotted abbreviation expands to several words, which
-    the per-word fallback cannot fix either.
-    """
+def test_to_phonemes_by_word_rejects_multi_word_expansions(
+    text: str, bad_token: str
+) -> None:
     with pytest.raises(ValueError, match=re.escape(repr(bad_token))):
         to_phonemes_by_word(text)
 
@@ -269,20 +244,10 @@ def test_to_phonemes_by_word_rejects_multi_word_expansions(text, bad_token):
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "Known limitation, found 2026-08-16 while adding the OOV probe: the "
-        "guard compares word count against group count, so two errors that "
-        "cancel out slip through. In 'e.g. this one', 'e.g.' over-expands to "
-        "2 groups while 'this one' loses its boundary and merges to 1, giving "
-        "3 groups for 3 words. The counts agree, no fallback fires, and "
-        "phonemes are silently attributed to the wrong words: e.g->[iː], "
-        "this->[dʒ,iː] (the 'g'), one->[ð,ɪ,s,w,ʌ,n] ('this one'). Every "
-        "downstream consumer of PhonemeError.word is then wrong. A real fix "
-        "must verify each token's group count individually rather than the "
-        "totals; remove this marker when that lands."
+        "Total group counts can hide compensating expansion and boundary loss; "
+        "remove after validating group counts per input token"
     ),
 )
-def test_to_phonemes_by_word_rejects_compensating_group_count_errors():
-    """A token that over-expands must be rejected even when another token's
-    lost boundary makes the totals match."""
+def test_to_phonemes_by_word_rejects_compensating_group_count_errors() -> None:
     with pytest.raises(ValueError, match=re.escape(repr("e.g"))):
         to_phonemes_by_word("e.g. this one")

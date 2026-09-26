@@ -1,8 +1,4 @@
-"""Gradio layout, result formatting, and event wiring.
-
-Model-backed Blocks wiring is covered by the manual E2E check;
-the formatting helpers are unit-tested directly.
-"""
+"""Gradio layout, result formatting, and event wiring."""
 
 from __future__ import annotations
 

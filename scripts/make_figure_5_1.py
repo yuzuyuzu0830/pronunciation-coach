@@ -17,8 +17,8 @@ from matplotlib.lines import Line2D
 KEY_TABLE = "precision_by_expected_phoneme"
 
 MIN_FLAGGED = 30  # Same threshold as the analysis script.
-CORPUS_PRECISION = 0.069  # Table 5.1.
-BASE_RATE = 0.024  # Table 5.1.
+CORPUS_PRECISION = 0.069  # Overall precision from the evaluation summary.
+BASE_RATE = 0.024  # Mispronunciation prevalence in the evaluated corpus.
 
 COL_OTHER = "#B8BDC4"     # non-rule-target bars
 COL_RULE = "#2E4057"      # rule-target bars

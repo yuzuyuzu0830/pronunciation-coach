@@ -1,10 +1,3 @@
-"""stage2 (scoring) end-to-end test against a small fixture.
-
-scripts/evaluate_detection.py isn't a package, so it's loaded via importlib
-rather than a normal import.
-"""
-
-import importlib.util
 import json
 import subprocess
 from pathlib import Path
@@ -16,19 +9,17 @@ try:
     from phonemizer.backend import EspeakBackend
 
     ESPEAK_AVAILABLE = EspeakBackend.is_available()
-except Exception:
+except (ImportError, OSError, RuntimeError):
     ESPEAK_AVAILABLE = False
 
-requires_espeak = pytest.mark.skipif(not ESPEAK_AVAILABLE, reason="espeak-ng is not installed")
+from pronunciation_coach.evaluation.metrics import ConfusionCounts
+from pronunciation_coach.evaluation.so762 import UtteranceAnnotation
+from scripts import evaluate_detection
 
-_SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "evaluate_detection.py"
-_spec = importlib.util.spec_from_file_location("evaluate_detection", _SCRIPT_PATH)
-evaluate_detection = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(evaluate_detection)
+requires_espeak = pytest.mark.skipif(
+    not ESPEAK_AVAILABLE, reason="espeak-ng is not installed"
+)
 
-# Ground truth for "THIS IS HIGH" (DH mispronounced as D, HH mispronounced but
-# missed by the recognizer) and "WATER" (fully correct), matching real
-# espeak-ng output for this text.
 SCORES = {
     "0001010011": {
         "text": "THIS IS HIGH",
@@ -37,7 +28,9 @@ SCORES = {
                 "text": "THIS",
                 "phones": ["DH", "IH1", "S"],
                 "phones-accuracy": [0.2, 2.0, 2.0],
-                "mispronunciations": [{"canonical-phone": "DH", "index": 0, "pronounced-phone": "D"}],
+                "mispronunciations": [
+                    {"canonical-phone": "DH", "index": 0, "pronounced-phone": "D"}
+                ],
             },
             {
                 "text": "IS",
@@ -49,7 +42,9 @@ SCORES = {
                 "text": "HIGH",
                 "phones": ["HH", "AY1"],
                 "phones-accuracy": [0.0, 2.0],
-                "mispronunciations": [{"canonical-phone": "HH", "index": 0, "pronounced-phone": "<unk>"}],
+                "mispronunciations": [
+                    {"canonical-phone": "HH", "index": 0, "pronounced-phone": "<unk>"}
+                ],
             },
         ],
     },
@@ -66,37 +61,37 @@ SCORES = {
     },
 }
 
-# Recognizer output: "this" read as "dis" (ð->d, the flagged DH error); HIGH's
-# HH mispronunciation is NOT caught by the recognizer, 
-# a realistic false accept. WATER is read perfectly.
 HYP_PHONEMES = {
     "0001010011": ["d", "ɪ", "s", "ɪ", "z", "h", "aɪ"],
     "0002030022": ["w", "ɔː", "ɾ", "ɚ"],
 }
 
-# The corpus's utt id does not embed its speaker id; scoring always looks it
-# up via utt2spk (so762.parse_utt2spk).
+# DH→D is detected, the HH error is missed, and WATER is a correct control.
+
 SPEAKER_BY_UTT = {"0001010011": "0001", "0002030022": "0002"}
 
-
-AGE_BY_SPEAKER = {"0001": 10, "0002": 25}  # speaker 0001: child, 0002: adult
+AGE_BY_SPEAKER = {"0001": 10, "0002": 25}
 
 
 @pytest.mark.parametrize(
     "exc",
     [OSError("git unavailable"), subprocess.CalledProcessError(128, ["git"])],
 )
-def test_git_commit_short_returns_none_for_expected_git_failures(exc):
+def test_git_commit_short_returns_none_for_expected_git_failures(
+    exc: Exception,
+) -> None:
     with patch.object(evaluate_detection.subprocess, "run", side_effect=exc):
         assert evaluate_detection._git_commit_short() is None
 
 
-def test_git_commit_short_does_not_hide_unexpected_errors():
-    with patch.object(
-        evaluate_detection.subprocess, "run", side_effect=RuntimeError("bug")
+def test_git_commit_short_does_not_hide_unexpected_errors() -> None:
+    with (
+        patch.object(
+            evaluate_detection.subprocess, "run", side_effect=RuntimeError("bug")
+        ),
+        pytest.raises(RuntimeError, match="bug"),
     ):
-        with pytest.raises(RuntimeError, match="bug"):
-            evaluate_detection._git_commit_short()
+        evaluate_detection._git_commit_short()
 
 
 def _write_spk2age(tmp_path: Path) -> list[Path]:
@@ -118,7 +113,7 @@ def _write_utt2spk(tmp_path: Path) -> list[Path]:
 
 
 @requires_espeak
-def test_run_stage2_computes_expected_metrics():
+def test_run_stage2_computes_expected_metrics() -> None:
     utterances = evaluate_detection.parse_scores(SCORES, SPEAKER_BY_UTT)
     result, judgements, insertions, skipped = evaluate_detection.run_stage2(
         utterances, HYP_PHONEMES, threshold=0.5
@@ -126,15 +121,19 @@ def test_run_stage2_computes_expected_metrics():
 
     assert skipped == []
     assert result.insertion_stats.utterance_count == 2
-    # TR=1 (DH correctly flagged), FA=1 (HH missed) -> FAR = 1/2
     assert result.far == pytest.approx(0.5)
-    # No false rejects among the 9 true-accept phones -> FRR = 0
     assert result.frr == pytest.approx(0.0)
-    # DH's diagnosis (actual "d") matches ground truth's pronounced-phone "D"
     assert result.der == pytest.approx(0.0)
     assert result.der_counts.eligible == 1
-    assert result.confusion.total == 11
-    assert isinstance(insertions, list)
+    assert result.confusion == ConfusionCounts(
+        true_accept=9,
+        false_reject=0,
+        false_accept=1,
+        true_reject=1,
+        excluded=0,
+        total=11,
+    )
+    assert insertions == []
 
     dh = next(j for j in judgements if j.gt_phone == "DH")
     assert dh.system_flagged and dh.system_actual == "d"
@@ -143,7 +142,7 @@ def test_run_stage2_computes_expected_metrics():
 
 
 @requires_espeak
-def test_cmd_score_writes_expected_output_files(tmp_path):
+def test_cmd_score_writes_expected_output_files(tmp_path: Path) -> None:
     scores_path = tmp_path / "scores.json"
     scores_path.write_text(json.dumps(SCORES), encoding="utf-8")
     hyp_path = tmp_path / "hyp_phonemes.jsonl"
@@ -176,7 +175,9 @@ def test_cmd_score_writes_expected_output_files(tmp_path):
     assert metrics["run_metadata"]["run_id"] == "test_run"
     assert "der_adaptation_note" in metrics
 
-    judgement_lines = (out_dir / "judgements.jsonl").read_text(encoding="utf-8").splitlines()
+    judgement_lines = (
+        (out_dir / "judgements.jsonl").read_text(encoding="utf-8").splitlines()
+    )
     assert len(judgement_lines) == 11
 
     report = (out_dir / "detection_eval_test_run.md").read_text(encoding="utf-8")
@@ -184,11 +185,11 @@ def test_cmd_score_writes_expected_output_files(tmp_path):
     assert not (out_dir / "skipped.txt").exists()
 
 
-# --- age_group_breakdown ---
+# Age-group breakdown
+
 
 @requires_espeak
-def test_age_group_breakdown_splits_by_child_adult(tmp_path):
-    """0001 (age 10, child) has "this is high"; 0002 (age 25, adult) has "water"."""
+def test_age_group_breakdown_splits_by_child_adult(tmp_path: Path) -> None:
     utterances = evaluate_detection.parse_scores(SCORES, SPEAKER_BY_UTT)
     _, judgements, insertions, skipped = evaluate_detection.run_stage2(
         utterances, HYP_PHONEMES, threshold=0.5
@@ -200,17 +201,17 @@ def test_age_group_breakdown_splits_by_child_adult(tmp_path):
         skipped,
         spk2age_paths=_write_spk2age(tmp_path),
     )
-    assert breakdown["child"]["n_utterances"] == 1  # speaker 0001 -> "this is high"
-    assert breakdown["adult"]["n_utterances"] == 1  # speaker 0002 -> "water"
+    assert breakdown["child"]["n_utterances"] == 1
+    assert breakdown["adult"]["n_utterances"] == 1
     assert breakdown["child"]["n_scored"] == 1
     assert breakdown["adult"]["n_scored"] == 1
     assert "n_utterances_unknown_age" not in breakdown
 
 
 @requires_espeak
-def test_age_group_breakdown_counts_unknown_age_speakers(tmp_path):
+def test_age_group_breakdown_counts_unknown_age_speakers(tmp_path: Path) -> None:
     spk2age_path = tmp_path / "spk2age"
-    spk2age_path.write_text("0001 10\n", encoding="utf-8")  # 0002 deliberately omitted
+    spk2age_path.write_text("0001 10\n", encoding="utf-8")
     utterances = evaluate_detection.parse_scores(SCORES, SPEAKER_BY_UTT)
     _, judgements, insertions, skipped = evaluate_detection.run_stage2(
         utterances, HYP_PHONEMES, threshold=0.5
@@ -222,8 +223,9 @@ def test_age_group_breakdown_counts_unknown_age_speakers(tmp_path):
     assert breakdown["adult"]["n_utterances"] == 0
 
 
-def test_age_group_breakdown_reuses_judgements_without_rerunning_stage2(tmp_path, monkeypatch):
-    """Age breakdown must filter existing judgements, not call run_stage2 again."""
+def test_age_group_breakdown_reuses_judgements_without_rerunning_stage2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     utterances = evaluate_detection.parse_scores(SCORES, SPEAKER_BY_UTT)
     judgements = [
         evaluate_detection.PhonemeJudgement(
@@ -256,15 +258,14 @@ def test_age_group_breakdown_reuses_judgements_without_rerunning_stage2(tmp_path
         ),
     ]
 
-    def fail_stage2(*_args, **_kwargs):
+    def fail_stage2(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("age_group_breakdown must not call run_stage2")
 
+    def fail_g2p(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("age_group_breakdown must not call g2p")
+
     monkeypatch.setattr(evaluate_detection, "run_stage2", fail_stage2)
-    monkeypatch.setattr(
-        evaluate_detection,
-        "to_phonemes_by_word_many",
-        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not call g2p")),
-    )
+    monkeypatch.setattr(evaluate_detection, "to_phonemes_by_word_many", fail_g2p)
 
     breakdown = evaluate_detection.age_group_breakdown(
         utterances,
@@ -280,7 +281,7 @@ def test_age_group_breakdown_reuses_judgements_without_rerunning_stage2(tmp_path
 
 
 @requires_espeak
-def test_cmd_score_with_spk2age_adds_age_breakdown_to_metrics(tmp_path):
+def test_cmd_score_with_spk2age_adds_age_breakdown_to_metrics(tmp_path: Path) -> None:
     scores_path = tmp_path / "scores.json"
     scores_path.write_text(json.dumps(SCORES), encoding="utf-8")
     hyp_path = tmp_path / "hyp_phonemes.jsonl"
@@ -314,11 +315,12 @@ def test_cmd_score_with_spk2age_adds_age_breakdown_to_metrics(tmp_path):
 
 
 @requires_espeak
-def test_cmd_score_reports_skipped_utterances_missing_from_hyp_jsonl(tmp_path):
+def test_cmd_score_reports_skipped_utterances_missing_from_hyp_jsonl(
+    tmp_path: Path,
+) -> None:
     scores_path = tmp_path / "scores.json"
     scores_path.write_text(json.dumps(SCORES), encoding="utf-8")
     hyp_path = tmp_path / "hyp_phonemes.jsonl"
-    # Only include one of the two utterances.
     hyp_path.write_text(
         json.dumps({"utt_id": "0002030022", "phonemes": HYP_PHONEMES["0002030022"]}),
         encoding="utf-8",
@@ -351,11 +353,12 @@ def test_cmd_score_reports_skipped_utterances_missing_from_hyp_jsonl(tmp_path):
         OSError("libespeak not found"),
     ],
 )
-def test_run_stage2_skips_all_when_batched_g2p_raises(monkeypatch, exc):
-    """Backend-level failure on the batched phonemize skips every pending utt."""
+def test_run_stage2_skips_all_when_batched_g2p_raises(
+    monkeypatch: pytest.MonkeyPatch, exc: Exception
+) -> None:
     utterances = evaluate_detection.parse_scores(SCORES, SPEAKER_BY_UTT)
 
-    def boom(_texts: list[str]):
+    def boom(_texts: list[str]) -> None:
         raise exc
 
     monkeypatch.setattr(evaluate_detection, "to_phonemes_by_word_many", boom)
@@ -371,11 +374,12 @@ def test_run_stage2_skips_all_when_batched_g2p_raises(monkeypatch, exc):
     assert all("g2p_failed" in s for s in skipped)
 
 
-def test_run_stage2_skips_utterance_on_per_text_word_count_mismatch(monkeypatch):
-    """Word/group mismatches stay per-utterance after the batched phonemize."""
+def test_run_stage2_skips_utterance_on_per_text_word_count_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     utterances = evaluate_detection.parse_scores(SCORES, SPEAKER_BY_UTT)
 
-    def fake_many(texts: list[str]):
+    def fake_many(texts: list[str]) -> list[ValueError | list[tuple[str, list[str]]]]:
         assert len(texts) == 2
         return [
             ValueError("word count mismatch"),
@@ -384,24 +388,24 @@ def test_run_stage2_skips_utterance_on_per_text_word_count_mismatch(monkeypatch)
 
     monkeypatch.setattr(evaluate_detection, "to_phonemes_by_word_many", fake_many)
 
-    result, judgements, insertions, skipped = evaluate_detection.run_stage2(
+    result, judgements, _, skipped = evaluate_detection.run_stage2(
         utterances, HYP_PHONEMES, threshold=0.5
     )
 
     assert len(skipped) == 1
     assert skipped[0].startswith("0001010011: g2p_word_count_mismatch")
     assert result.insertion_stats.utterance_count == 1
-    assert judgements
+    assert {judgement.utt_id for judgement in judgements} == {"0002030022"}
 
 
-# --- sample: test-split filtering ---
+# Test-split sampling
 
 
-def test_cmd_sample_restricts_to_utt_ids_filter(tmp_path):
+def test_cmd_sample_restricts_to_utt_ids_filter(tmp_path: Path) -> None:
     scores_path = tmp_path / "scores.json"
     scores_path.write_text(json.dumps(SCORES), encoding="utf-8")
     utt_ids_path = tmp_path / "test_split.txt"
-    utt_ids_path.write_text("0002030022\n", encoding="utf-8")  # only WATER is "test"
+    utt_ids_path.write_text("0002030022\n", encoding="utf-8")
     out_path = tmp_path / "sample_out.txt"
 
     args = evaluate_detection.argparse.Namespace(
@@ -417,11 +421,15 @@ def test_cmd_sample_restricts_to_utt_ids_filter(tmp_path):
     assert out_path.read_text(encoding="utf-8").strip() == "0002030022"
 
 
-# --- stage1 (recognize): resumable JSONL, tested with a fake recognizer ---
+# Recognition and resume behavior
 
 
-class FakeRecognizer:
-    def __init__(self, phonemes_by_utt=None, raise_for=frozenset()):
+class _FakeRecognizer:
+    def __init__(
+        self,
+        phonemes_by_utt: dict[str, list[str]] | None = None,
+        raise_for: frozenset[str] = frozenset(),
+    ) -> None:
         self.phonemes_by_utt = phonemes_by_utt or {}
         self.raise_for = raise_for
         self.calls: list[Path] = []
@@ -434,10 +442,13 @@ class FakeRecognizer:
         return self.phonemes_by_utt.get(utt_id, ["x", "y"])
 
 
-def make_utterances_with_audio(tmp_path, utt_ids, missing=frozenset()):
-    """Build minimal UtteranceAnnotations and matching dummy WAVE/ files."""
+def _make_utterances_with_audio(
+    tmp_path: Path,
+    utt_ids: list[str],
+    missing: frozenset[str] = frozenset(),
+) -> tuple[list[UtteranceAnnotation], Path]:
     wave_root = tmp_path / "WAVE"
-    utterances = []
+    utterances: list[UtteranceAnnotation] = []
     for utt_id in utt_ids:
         speaker_id = utt_id[:4]
         utterances.append(
@@ -453,13 +464,15 @@ def make_utterances_with_audio(tmp_path, utt_ids, missing=frozenset()):
     return utterances, wave_root
 
 
-def test_run_stage1_recognizes_all_and_writes_jsonl(tmp_path):
+def test_run_stage1_recognizes_all_and_writes_jsonl(tmp_path: Path) -> None:
     utt_ids = ["0001000001", "0001000002", "0003000001"]
-    utterances, wave_root = make_utterances_with_audio(tmp_path, utt_ids)
-    recognizer = FakeRecognizer({"0001000001": ["a", "b"], "0003000001": ["c"]})
+    utterances, wave_root = _make_utterances_with_audio(tmp_path, utt_ids)
+    recognizer = _FakeRecognizer({"0001000001": ["a", "b"], "0003000001": ["c"]})
     out_path = tmp_path / "hyp_phonemes.jsonl"
 
-    newly, skipped = evaluate_detection.run_stage1(utterances, wave_root, recognizer, out_path)
+    newly, skipped = evaluate_detection.run_stage1(
+        utterances, wave_root, recognizer, out_path
+    )
 
     assert newly == 3
     assert skipped == []
@@ -472,15 +485,16 @@ def test_run_stage1_recognizes_all_and_writes_jsonl(tmp_path):
     assert len(recognizer.calls) == 3
 
 
-def test_run_stage1_resumes_and_skips_already_processed(tmp_path):
-    """Simulates an interrupted run: rerun must not re-recognize completed utts."""
+def test_run_stage1_resumes_and_skips_already_processed(tmp_path: Path) -> None:
     utt_ids = ["0001000001", "0001000002", "0001000003"]
-    utterances, wave_root = make_utterances_with_audio(tmp_path, utt_ids)
+    utterances, wave_root = _make_utterances_with_audio(tmp_path, utt_ids)
     out_path = tmp_path / "hyp_phonemes.jsonl"
 
-    first_recognizer = FakeRecognizer(raise_for={"0001000003"})
-    newly1, skipped1 = evaluate_detection.run_stage1(utterances, wave_root, first_recognizer, out_path)
-    assert newly1 == 2  # 0001000001, 0001000002 succeed; 0001000003 fails (not written)
+    first_recognizer = _FakeRecognizer(raise_for=frozenset({"0001000003"}))
+    newly1, skipped1 = evaluate_detection.run_stage1(
+        utterances, wave_root, first_recognizer, out_path
+    )
+    assert newly1 == 2
     assert skipped1 == ["0001000003: recognize_failed: boom on 0001000003"]
     assert set(first_recognizer.calls) == {
         wave_root / "SPEAKER0001" / "0001000001.WAV",
@@ -488,27 +502,32 @@ def test_run_stage1_resumes_and_skips_already_processed(tmp_path):
         wave_root / "SPEAKER0001" / "0001000003.WAV",
     }
 
-    # "Resume": a fresh recognizer that would raise for ALL utt ids if called --
-    # proves the already-written two are skipped, only the failed one retried.
-    second_recognizer = FakeRecognizer(raise_for={"0001000001", "0001000002", "0001000003"})
-    newly2, skipped2 = evaluate_detection.run_stage1(utterances, wave_root, second_recognizer, out_path)
+    second_recognizer = _FakeRecognizer(
+        raise_for=frozenset({"0001000001", "0001000002", "0001000003"})
+    )
+    newly2, skipped2 = evaluate_detection.run_stage1(
+        utterances, wave_root, second_recognizer, out_path
+    )
 
     assert newly2 == 0
     assert skipped2 == ["0001000003: recognize_failed: boom on 0001000003"]
-    # Only the still-missing utt was re-attempted; the two done ones were never touched.
     assert second_recognizer.calls == [wave_root / "SPEAKER0001" / "0001000003.WAV"]
 
     hyp = evaluate_detection.load_hyp_phonemes(out_path)
-    assert set(hyp.keys()) == {"0001000001", "0001000002"}
+    assert set(hyp) == {"0001000001", "0001000002"}
 
 
-def test_run_stage1_skips_missing_audio_file(tmp_path):
+def test_run_stage1_skips_missing_audio_file(tmp_path: Path) -> None:
     utt_ids = ["0001000001", "0001000002"]
-    utterances, wave_root = make_utterances_with_audio(tmp_path, utt_ids, missing={"0001000002"})
-    recognizer = FakeRecognizer()
+    utterances, wave_root = _make_utterances_with_audio(
+        tmp_path, utt_ids, missing=frozenset({"0001000002"})
+    )
+    recognizer = _FakeRecognizer()
     out_path = tmp_path / "hyp_phonemes.jsonl"
 
-    newly, skipped = evaluate_detection.run_stage1(utterances, wave_root, recognizer, out_path)
+    newly, skipped = evaluate_detection.run_stage1(
+        utterances, wave_root, recognizer, out_path
+    )
 
     assert newly == 1
     assert len(skipped) == 1
@@ -516,22 +535,27 @@ def test_run_stage1_skips_missing_audio_file(tmp_path):
     assert recognizer.calls == [wave_root / "SPEAKER0001" / "0001000001.WAV"]
 
 
-def test_run_stage1_skips_on_recognizer_exception_without_aborting_others(tmp_path):
+def test_run_stage1_skips_on_recognizer_exception_without_aborting_others(
+    tmp_path: Path,
+) -> None:
     utt_ids = ["0001000001", "0001000002", "0001000003"]
-    utterances, wave_root = make_utterances_with_audio(tmp_path, utt_ids)
-    recognizer = FakeRecognizer(raise_for={"0001000002"})
+    utterances, wave_root = _make_utterances_with_audio(tmp_path, utt_ids)
+    recognizer = _FakeRecognizer(raise_for=frozenset({"0001000002"}))
     out_path = tmp_path / "hyp_phonemes.jsonl"
 
-    newly, skipped = evaluate_detection.run_stage1(utterances, wave_root, recognizer, out_path)
+    newly, skipped = evaluate_detection.run_stage1(
+        utterances, wave_root, recognizer, out_path
+    )
 
     assert newly == 2
     assert skipped == ["0001000002: recognize_failed: boom on 0001000002"]
     hyp = evaluate_detection.load_hyp_phonemes(out_path)
-    assert set(hyp.keys()) == {"0001000001", "0001000003"}
+    assert set(hyp) == {"0001000001", "0001000003"}
 
 
-def test_cmd_score_exits_when_every_utterance_g2p_fails(tmp_path, monkeypatch):
-    """All-skip (e.g. espeak missing) must not look like a successful empty run."""
+def test_cmd_score_exits_when_every_utterance_g2p_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     scores_path = tmp_path / "scores.json"
     scores_path.write_text(json.dumps(SCORES), encoding="utf-8")
     hyp_path = tmp_path / "hyp_phonemes.jsonl"
@@ -544,7 +568,7 @@ def test_cmd_score_exits_when_every_utterance_g2p_fails(tmp_path, monkeypatch):
     )
     out_dir = tmp_path / "results"
 
-    def boom(_texts: list[str]):
+    def boom(_texts: list[str]) -> None:
         raise RuntimeError("espeak unavailable")
 
     monkeypatch.setattr(evaluate_detection, "to_phonemes_by_word_many", boom)

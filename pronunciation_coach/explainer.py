@@ -1,6 +1,6 @@
 """Explanation generation from structured error reports (Ollama).
 
-The LLM explains only; detection stays with the acoustic side. 
+The LLM explains only; detection stays with the acoustic side.
 The prompt therefore embeds already-detected errors and forbids re-judging them.
 """
 
@@ -22,8 +22,8 @@ listed below. Your job is ONLY to explain them:
 - Do not invent phoneme symbols; use only the symbols given below.
 - Explain in simple, plain English without specialised phonetic jargon."""
 
-# v2 prevents observed symbol invention, structural collapse, and unsupported
-# L1 generalizations. v1 remains available for comparison.
+# v2 constrains symbols, output structure, and unsupported L1 generalizations.
+# v1 remains available for comparison.
 _ROLE_INSTRUCTION_V2 = """\
 You are a pronunciation coach for English learners.
 A separate acoustic system has already detected the pronunciation errors \
@@ -42,9 +42,8 @@ separate final section after the numbered items; never drop it.
 on describing what happened and giving a practice method.
 - Explain in simple, plain English without specialised phonetic jargon."""
 
-# v3 limits the LLM to rephrasing matched knowledge.
-# Unmatched errors are rendered deterministically because the model invented
-# tips when asked to describe facts-only items in the 2026-07-22 run.
+# v3 limits the LLM to rephrasing matched knowledge. Unmatched errors use
+# deterministic text to prevent unsupported tips.
 _ROLE_INSTRUCTION_V3 = """\
 You are a pronunciation coach for English learners.
 A separate acoustic system has already detected the pronunciation errors \
@@ -118,8 +117,7 @@ def rank_errors_by_tier(
 def _format_knowledge_block(record: KnowledgeRecord) -> list[str]:
     """Place knowledge under its error to preserve the association.
 
-    Fallback records omit L1 causes and internal phenomenon ids after the
-    model exposed an id verbatim in the 2026-07-22 run.
+    Fallback records omit L1 causes and internal phenomenon IDs.
     """
     block = []
     if record.tier == "l1_specific":
@@ -137,8 +135,7 @@ def _format_knowledge_block(record: KnowledgeRecord) -> list[str]:
 def format_facts_only_error(error: PhonemeError) -> str:
     """Deterministic learner-facing sentence for a facts-only error.
 
-    These errors bypass the LLM because it invented unsupported tips for them
-    in the 2026-07-22 comparison run.
+    These errors bypass the LLM to prevent unsupported tips.
     """
     location = (
         f'In the word "{error.word}"'
@@ -261,8 +258,7 @@ def _append_v3_error_section(
         )
         lines.append("")
         return
-    # Literal count guards against the model inventing extra items when
-    # explained == 1 (regression observed in the 2026-07-20 comparison run).
+    # A literal count prevents extra numbered items when explained == 1.
     lines.append(
         f"There are exactly {explained} numbered items below (this holds even "
         f"when {explained} == 1). Output exactly {explained} numbered items — do "
@@ -308,12 +304,10 @@ def _should_skip_llm(
     version: str,
     full_explanation_limit: int,
 ) -> bool:
-    """True when the prompt would leave the LLM nothing to say.
+    """Return whether v3 can render the result without an LLM call.
 
-    At M=0, the 2026-08-23 run produced unsupported numbered items and
-    reading-mistake sections. The deterministic facts-only block did not, so
-    it replaces the LLM call. A no-error report produced the same unsupported content.
-    Reports with misreads still need word-level coaching and remain eligible for the LLM.
+    M=0 and no-error reports contain no supported coaching material. Reports
+    with possible misreads still need word-level coaching.
     """
     _require_non_negative_limit(full_explanation_limit)
     uses_structured_knowledge = version == "v3"

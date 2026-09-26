@@ -4,7 +4,11 @@ Pure string formatting only.
 
 from __future__ import annotations
 
-from pronunciation_coach.evaluation.metrics import DER_ADAPTATION_NOTE, MetricsResult, PhonePairCount
+from pronunciation_coach.evaluation.metrics import (
+    DER_ADAPTATION_NOTE,
+    MetricsResult,
+    PhonePairCount,
+)
 
 
 def _pair_rows(pairs: list[PhonePairCount]) -> list[str]:
@@ -35,8 +39,11 @@ def render_report(result: MetricsResult, run_metadata: dict) -> str:
         "",
         f"- FAR (miss rate): {result.far:.3f}  [FA={c.false_accept}, TR={c.true_reject}]",
         f"- FRR (false alarm rate): {result.frr:.3f}  [FR={c.false_reject}, TA={c.true_accept}]",
-        f"- DER (diagnostic error rate): {result.der:.3f}  [mismatched={dc.mismatched}, "
-        f"eligible={dc.eligible}] -- out of scope for this corpus, see note below",
+        (
+            f"- DER (diagnostic error rate): {result.der:.3f}  "
+            f"[mismatched={dc.mismatched}, eligible={dc.eligible}] -- "
+            "out of scope for this corpus, see note below"
+        ),
         "",
         "### DER is out of scope for this corpus",
         "",
@@ -55,9 +62,12 @@ def render_report(result: MetricsResult, run_metadata: dict) -> str:
         "",
         "## Top false-reject (reference, hyp) pairs",
         "",
-        "Most frequent (reference phone, hypothesis phone) pairs behind false rejects "
-        "(ground truth says correct, system flagged anyway). Candidates for manual review "
-        "against g2p.EQUIVALENCE_CLASSES' inclusion criterion -- not classified here.",
+        (
+            "Most frequent (reference phone, hypothesis phone) pairs behind false "
+            "rejects (ground truth says correct, system flagged anyway). Candidates "
+            "for manual review against g2p.EQUIVALENCE_CLASSES' inclusion criterion "
+            "-- not classified here."
+        ),
         "",
         "| reference | hyp | count |",
         "|---|---|---|",
@@ -65,11 +75,14 @@ def render_report(result: MetricsResult, run_metadata: dict) -> str:
         "",
         "## Top true-reject (reference, hyp) pairs",
         "",
-        "Most frequent (reference phone, hypothesis phone) pairs behind true rejects "
-        "(ground truth says mispronounced, system correctly flagged it). Compare against "
-        "the false-reject table above for the same pair: appearing on both sides suggests "
-        "rater leniency on a borderline case; appearing almost only as a false reject "
-        "suggests the model is systematically too strict for that pair.",
+        (
+            "Most frequent (reference phone, hypothesis phone) pairs behind true "
+            "rejects (ground truth says mispronounced, system correctly flagged it). "
+            "Compare against the false-reject table above for the same pair: appearing "
+            "on both sides suggests rater leniency on a borderline case; appearing "
+            "almost only as a false reject suggests the model is systematically too "
+            "strict for that pair."
+        ),
         "",
         "| reference | hyp | count |",
         "|---|---|---|",
@@ -77,11 +90,14 @@ def render_report(result: MetricsResult, run_metadata: dict) -> str:
         "",
         "## Known limitations",
         "",
-        "- Insertion-type errors (e.g. vowel epenthesis) are not reflected in the primary "
-        "metrics (FAR/FRR/DER) (docs/design_eval.md §3.3; same class of position-based "
-        "evaluation limit noted in Preliminary Report §4.5).",
-        "- The ARPAbet–espeak acceptance table (phone_map.ACCEPTED_ESPEAK) is provisional; "
-        "the exclusion counts above and the judgement detail (judgements.jsonl) need visual "
-        "review (docs/design_eval.md §7).",
+        (
+            "- Insertion-type errors (e.g. vowel epenthesis) are excluded from the "
+            "primary metrics because they have no corresponding ground-truth phone "
+            "position."
+        ),
+        (
+            "- The ARPAbet–espeak acceptance table (phone_map.ACCEPTED_ESPEAK) is "
+            "provisional; review the exclusion counts and judgements.jsonl manually."
+        ),
     ]
     return "\n".join(lines)

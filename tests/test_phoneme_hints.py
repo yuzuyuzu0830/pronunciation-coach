@@ -1,5 +1,3 @@
-"""Checks for the phoneme-to-grapheme highlighting table."""
-
 import pytest
 
 from pronunciation_coach.g2p import normalize, to_phonemes_by_word
@@ -10,14 +8,16 @@ try:
     from phonemizer.backend import EspeakBackend
 
     ESPEAK_AVAILABLE = EspeakBackend.is_available()
-except Exception:
+except (ImportError, OSError, RuntimeError):
     ESPEAK_AVAILABLE = False
 
-requires_espeak = pytest.mark.skipif(not ESPEAK_AVAILABLE, reason="espeak-ng is not installed")
+requires_espeak = pytest.mark.skipif(
+    not ESPEAK_AVAILABLE, reason="espeak-ng is not installed"
+)
 
 
 @requires_espeak
-def test_all_trial_sentence_phonemes_have_a_hint():
+def test_all_trial_sentence_phonemes_have_a_hint() -> None:
     missing: set[str] = set()
     for sentence in TRIAL_SENTENCES:
         phonemes = normalize(
@@ -27,39 +27,32 @@ def test_all_trial_sentence_phonemes_have_a_hint():
     assert not missing, f"phonemes with no hint: {sorted(missing)}"
 
 
-def test_phoneme_hints_have_non_empty_graphemes():
+def test_phoneme_hints_have_non_empty_graphemes() -> None:
     for symbol, hint in PHONEME_HINTS.items():
         assert hint.grapheme.strip(), f"{symbol!r} has an empty grapheme"
 
 
-
-def test_locate_grapheme_basic_consonant_digraph():
-    """"Thank" / θ: the "th" at the start of the word."""
+def test_locate_grapheme_basic_consonant_digraph() -> None:
     word_phonemes = ["θ", "æ", "ŋ", "k"]
     assert locate_grapheme("Thank", "θ", 0, word_phonemes) == (0, 2)
 
 
-def test_locate_grapheme_basic_single_letter_vowel():
-    """"Thank" / æ: the "a"."""
+def test_locate_grapheme_basic_single_letter_vowel() -> None:
     word_phonemes = ["θ", "æ", "ŋ", "k"]
     assert locate_grapheme("Thank", "æ", 1, word_phonemes) == (2, 3)
 
 
-def test_locate_grapheme_ng_trigraph():
+def test_locate_grapheme_ng_digraph() -> None:
     word_phonemes = ["k", "ɪ", "ŋ"]
     assert locate_grapheme("king", "ŋ", 2, word_phonemes) == (2, 4)
 
 
-def test_locate_grapheme_ee_digraph():
+def test_locate_grapheme_ee_digraph() -> None:
     word_phonemes = ["s", "iː"]
     assert locate_grapheme("see", "iː", 1, word_phonemes) == (1, 3)
 
 
-def test_locate_grapheme_disambiguates_repeated_same_phoneme_by_order():
-    """A synthetic word/phoneme pairing chosen to
-    exercise the disambiguation heuristic itself: "n" occurs twice in both
-    the phoneme sequence and the spelling, in the same left-to-right order,
-    so each occurrence should resolve to its own position."""
+def test_locate_grapheme_disambiguates_repeated_same_phoneme_by_order() -> None:
     word = "banana"
     word_phonemes = ["b", "ə", "n", "æ", "n", "ə"]
     first_n = locate_grapheme(word, "n", 2, word_phonemes)
@@ -69,35 +62,28 @@ def test_locate_grapheme_disambiguates_repeated_same_phoneme_by_order():
     assert first_n != second_n
 
 
-def test_locate_grapheme_returns_none_for_irregular_spelling():
-    """"though" is /ðoʊ/: the "oʊ" sound isn't spelled with the table's
-    typical grapheme ("oa"), so the substring count (0) can't be matched
-    against the phoneme count (1); must fall back to None, not a guess."""
+def test_locate_grapheme_returns_none_for_irregular_spelling() -> None:
     word_phonemes = ["ð", "oʊ"]
     assert locate_grapheme("though", "oʊ", 1, word_phonemes) is None
 
 
-def test_locate_grapheme_returns_none_when_phoneme_has_no_hint():
+def test_locate_grapheme_returns_none_when_phoneme_has_no_hint() -> None:
     assert locate_grapheme("x", "ʔ", 0, ["ʔ"]) is None
 
 
-def test_locate_grapheme_returns_none_for_index_out_of_range():
+def test_locate_grapheme_returns_none_for_index_out_of_range() -> None:
     assert locate_grapheme("thank", "θ", 5, ["θ", "æ", "ŋ", "k"]) is None
     assert locate_grapheme("thank", "θ", -1, ["θ", "æ", "ŋ", "k"]) is None
 
 
-def test_locate_grapheme_returns_none_when_index_does_not_match_phoneme():
-    """Defensive: the caller passed an index/phoneme pair that don't agree
-    with word_phonemes. This indicates a bug upstream, not something to
-    silently paper over with a wrong highlight."""
+def test_locate_grapheme_returns_none_when_index_does_not_match_phoneme() -> None:
     assert locate_grapheme("thank", "æ", 0, ["θ", "æ", "ŋ", "k"]) is None
 
 
 @requires_espeak
-def test_locate_grapheme_never_raises_for_any_trial_word_and_phoneme():
+def test_locate_grapheme_never_raises_for_any_trial_word_and_phoneme() -> None:
     for sentence in TRIAL_SENTENCES:
         for word, phones in to_phonemes_by_word(sentence.text):
             word_phonemes = normalize(phones)
             for i, phoneme in enumerate(word_phonemes):
-                # Must not raise; None is an acceptable outcome.
                 locate_grapheme(word, phoneme, i, word_phonemes)

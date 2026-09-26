@@ -1,7 +1,7 @@
 """Ground-truth/system matching and FAR/FRR/DER computation.
 
-This module matches corpus annotations to detected errors, 
-then aggregates the resulting per-phone judgements. 
+This module matches corpus annotations to detected errors,
+then aggregates the resulting per-phone judgements.
 It performs no file or model I/O.
 """
 
@@ -31,8 +31,7 @@ DER_ADAPTATION_NOTE = (
     "DER is out of scope for speechocean762: the corpus provides no "
     "pronounced-phone (or equivalent) annotation of what a mispronounced "
     "phone was actually replaced with, so there is nothing to compare a "
-    "detected substitution's content against (confirmed against the real "
-    "corpus, 2026-07-22 -- docs/devlog.md, docs/design_eval.md §7). This "
+    "detected substitution's content against. This "
     "computation is retained for a possible future L2-ARCTIC extension where "
     "such annotations may exist. Diagnostic quality on speechocean762 should "
     "instead be assessed through user trials, not this metric."

@@ -1,8 +1,8 @@
 """Compare Whisper model sizes (base/small/medium) on real trial recordings.
 
 Replays saved trial audio to compare transcription accuracy and inference
-cost before changing the UI model. The trial log is the source of truth for
-audio/target pairs, including prior reading-mismatch outcomes.
+cost, and WER-gate behavior. The trial log is the source of truth for
+audio/target pairs, including reading-mismatch outcomes.
 """
 
 import argparse
@@ -95,10 +95,10 @@ def format_report(
     lines = [
         f"# Whisper model comparison on real recordings (participant {participant_id})",
         "",
-        "Trigger: false reading-mismatch gate failures and false misread "
-        "flags traced to Whisper-base mis-transcription in the P01 trial "
-        "(docs/devlog.md 2026-07-27). Every recording below is a real trial "
-        "take, replayed unchanged through each model size.",
+        (
+            "Each recording is a saved trial take replayed unchanged through "
+            "every model size to compare transcription and WER-gate behavior."
+        ),
         "",
     ]
 
@@ -121,8 +121,10 @@ def format_report(
             else "- Total inference time: n/a (no recordings)",
             f"- Mean WER vs. target sentence: {avg_wer:.3f}"
             + (f" ({len(scored)} scored, {len(errors)} failed)" if errors else ""),
-            f"- Recordings that would still fail the WER gate: "
-            f"{gate_failures}/{len(scored)}",
+            (
+                "- Recordings that would still fail the WER gate: "
+                f"{gate_failures}/{len(scored)}"
+            ),
             "",
             "| audio_file | logged outcome | target_text | transcript | WER | gate |",
             "|---|---|---|---|---|---|",
@@ -178,7 +180,7 @@ def main() -> None:
 
     report = format_report(args.participant, model_reports)
 
-    today = datetime.date.today().isoformat()
+    today = datetime.datetime.now().astimezone().date().isoformat()
     suffix = f"_{args.tag}" if args.tag else ""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = OUTPUT_DIR / f"whisper_model_comparison_{today}{suffix}.md"

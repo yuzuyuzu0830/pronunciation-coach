@@ -1,4 +1,4 @@
-"""speechocean762 ground-truth parsing for the detection evaluation .
+"""SpeechOcean762 ground-truth parsing for detection evaluation.
 
 The parser follows the corpus's Kaldi-recipe layout and raises on malformed
 fields instead of guessing.
@@ -58,8 +58,7 @@ def _parse_two_column_file(text: str, file_desc: str) -> dict[str, str]:
 def parse_utt2spk(text: str) -> dict[str, str]:
     """Parse a Kaldi-style utt2spk file: 'utt_id speaker_id' per line.
 
-    Utterance IDs do not encode their speaker, so this mapping is the
-    authoritative source (confirmed against the corpus, 2026-07-22).
+    Utterance IDs do not encode their speaker, so this mapping is authoritative.
     """
     return _parse_two_column_file(text, "utt2spk")
 
@@ -69,9 +68,7 @@ def parse_spk2age(text: str) -> dict[str, int]:
     return {spk: int(age) for spk, age in _parse_two_column_file(text, "spk2age").items()}
 
 
-# Confirmed against the real corpus (2026-07-22): ages split cleanly into
-# 6-15 (25 speakers) and 19-43 (100 speakers) with no speaker aged 16-18, 
-# so any cutoff placed in that gap gives the same classification.
+# Corpus ages form separate child (6-15) and adult (19-43) groups.
 CHILD_AGE_MAX = 15
 
 

@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 from pathlib import Path
 
 import pytest
 
-_SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "rerun_session.py"
-_SPEC = importlib.util.spec_from_file_location("rerun_session", _SCRIPT_PATH)
-if _SPEC is None or _SPEC.loader is None:
-    raise ImportError(f"Cannot load {_SCRIPT_PATH}")
-rerun_session = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(rerun_session)
+from scripts import rerun_session
 
 
-def test_load_records_skips_blank_lines(tmp_path: Path):
+def test_load_records_skips_blank_lines(tmp_path: Path) -> None:
     log_path = tmp_path / "trial_log.jsonl"
     record = {"app_session_id": "session-1"}
     log_path.write_text(f"{json.dumps(record)}\n\n", encoding="utf-8")
@@ -22,7 +16,7 @@ def test_load_records_skips_blank_lines(tmp_path: Path):
     assert rerun_session.load_records(log_path) == [record]
 
 
-def test_load_records_identifies_invalid_json_line(tmp_path: Path):
+def test_load_records_identifies_invalid_json_line(tmp_path: Path) -> None:
     log_path = tmp_path / "trial_log.jsonl"
     log_path.write_text('{"app_session_id": "session-1"}\ninvalid\n', encoding="utf-8")
 
@@ -30,7 +24,7 @@ def test_load_records_identifies_invalid_json_line(tmp_path: Path):
         rerun_session.load_records(log_path)
 
 
-def test_load_records_rejects_non_object_rows(tmp_path: Path):
+def test_load_records_rejects_non_object_rows(tmp_path: Path) -> None:
     log_path = tmp_path / "trial_log.jsonl"
     log_path.write_text("[]\n", encoding="utf-8")
 
@@ -40,12 +34,13 @@ def test_load_records_rejects_non_object_rows(tmp_path: Path):
 
 def test_rerun_rejects_existing_log_before_loading_models(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     out_dir = tmp_path / "rerun"
     out_dir.mkdir()
     (out_dir / "trial_log.jsonl").touch()
 
-    def fail_if_called(*, trial_logs_dir: Path):
+    def fail_if_called(*, trial_logs_dir: Path) -> None:
+        del trial_logs_dir
         pytest.fail("load_models must not run when the output log already exists")
 
     monkeypatch.setattr(rerun_session, "load_models", fail_if_called)

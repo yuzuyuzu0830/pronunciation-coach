@@ -1,8 +1,6 @@
-"""Unit tests for evaluation markdown report rendering."""
-
 from pronunciation_coach.evaluation.metrics import (
-    ConfusionCounts,
     DER_ADAPTATION_NOTE,
+    ConfusionCounts,
     DerCounts,
     InsertionStats,
     MetricsResult,
@@ -45,7 +43,7 @@ def _result(
     )
 
 
-def test_pair_rows_formats_hyp_phone_and_deleted_branch():
+def test_pair_rows_formats_hyp_phone_and_deleted_branch() -> None:
     rows = _pair_rows(
         [
             PhonePairCount(reference_phone="ð", hyp_phone="z", count=3),
@@ -58,11 +56,11 @@ def test_pair_rows_formats_hyp_phone_and_deleted_branch():
     ]
 
 
-def test_pair_rows_empty():
+def test_pair_rows_empty() -> None:
     assert _pair_rows([]) == []
 
 
-def test_render_report_includes_metrics_and_pair_tables():
+def test_render_report_includes_metrics_and_pair_tables() -> None:
     result = _result(
         top_false_rejects=[
             PhonePairCount(reference_phone="ð", hyp_phone="z", count=3),
@@ -108,7 +106,7 @@ def test_render_report_includes_metrics_and_pair_tables():
     assert "- Of which vowel insertions: 1" in report
 
 
-def test_render_report_uses_placeholders_for_missing_metadata():
+def test_render_report_uses_placeholders_for_missing_metadata() -> None:
     report = render_report(_result(), {})
     assert report.startswith("# Detection evaluation report (?)")
     assert "- Subset: ?" in report

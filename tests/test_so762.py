@@ -17,31 +17,31 @@ from pronunciation_coach.evaluation.so762 import (
 )
 
 FIXTURE = json.loads(
-    (Path(__file__).parent / "fixtures" / "so762_scores_sample.json").read_text(encoding="utf-8")
+    (Path(__file__).parent / "fixtures" / "so762_scores_sample.json").read_text(
+        encoding="utf-8"
+    )
 )
-# The real corpus's utt id does NOT embed its speaker id (confirmed against
-# the actual data, 2026-07-22) -- these ids are deliberately "wrong" prefixes
-# to make sure parse_scores relies on this mapping, not string-slicing.
+# The speaker IDs intentionally differ from the utterance ID prefixes.
 SPEAKER_BY_UTT = {"0001010011": "9001", "0002030022": "9002"}
 
 
-def test_parse_scores_returns_utterances_sorted_by_utt_id():
+def test_parse_scores_returns_utterances_sorted_by_utt_id() -> None:
     utterances = parse_scores(FIXTURE, SPEAKER_BY_UTT)
     assert [u.utt_id for u in utterances] == ["0001010011", "0002030022"]
 
 
-def test_parse_scores_uses_speaker_by_utt_mapping():
+def test_parse_scores_uses_speaker_by_utt_mapping() -> None:
     utterances = parse_scores(FIXTURE, SPEAKER_BY_UTT)
     assert utterances[0].speaker_id == "9001"
     assert utterances[1].speaker_id == "9002"
 
 
-def test_parse_scores_raises_when_utt_id_has_no_speaker_mapping():
+def test_parse_scores_raises_when_utt_id_has_no_speaker_mapping() -> None:
     with pytest.raises(ValueError, match="0001010011"):
         parse_scores(FIXTURE, {"0002030022": "9002"})
 
 
-def test_parse_scores_parses_word_and_phone_fields():
+def test_parse_scores_parses_word_and_phone_fields() -> None:
     utterances = parse_scores(FIXTURE, SPEAKER_BY_UTT)
     this_word = utterances[0].words[0]
     assert this_word == WordAnnotation(
@@ -52,7 +52,7 @@ def test_parse_scores_parses_word_and_phone_fields():
     )
 
 
-def test_parse_scores_parses_mispronunciations():
+def test_parse_scores_parses_mispronunciations() -> None:
     utterances = parse_scores(FIXTURE, SPEAKER_BY_UTT)
     high_word = utterances[0].words[2]
     assert high_word.mispronunciations == [
@@ -60,45 +60,49 @@ def test_parse_scores_parses_mispronunciations():
     ]
 
 
-def test_parse_scores_raises_on_missing_field():
-    malformed = {"0001010011": {"text": "THIS", "words": [{"text": "THIS", "phones": ["DH"]}]}}
+def test_parse_scores_raises_on_missing_field() -> None:
+    malformed = {
+        "0001010011": {"text": "THIS", "words": [{"text": "THIS", "phones": ["DH"]}]}
+    }
     with pytest.raises(ValueError, match="phones-accuracy"):
         parse_scores(malformed, SPEAKER_BY_UTT)
 
 
-def test_parse_scores_raises_on_phones_length_mismatch():
+def test_parse_scores_raises_on_phones_length_mismatch() -> None:
     malformed = {
         "0001010011": {
             "text": "THIS",
-            "words": [{"text": "THIS", "phones": ["DH", "IH1"], "phones-accuracy": [2.0]}],
+            "words": [
+                {"text": "THIS", "phones": ["DH", "IH1"], "phones-accuracy": [2.0]}
+            ],
         }
     }
     with pytest.raises(ValueError, match="length mismatch"):
         parse_scores(malformed, SPEAKER_BY_UTT)
 
 
-def test_parse_utt2spk_parses_utt_id_speaker_id_pairs():
+def test_parse_utt2spk_parses_utt_id_speaker_id_pairs() -> None:
     text = "010610129 1061\n000010011 0001\n"
     assert parse_utt2spk(text) == {"010610129": "1061", "000010011": "0001"}
 
 
-def test_parse_utt2spk_skips_blank_lines():
+def test_parse_utt2spk_skips_blank_lines() -> None:
     assert parse_utt2spk("010610129 1061\n\n\n000010011 0001\n") == {
         "010610129": "1061",
         "000010011": "0001",
     }
 
 
-def test_parse_utt2spk_raises_on_malformed_line():
+def test_parse_utt2spk_raises_on_malformed_line() -> None:
     with pytest.raises(ValueError, match="Malformed"):
         parse_utt2spk("010610129\n")
 
 
-def test_parse_spk2age_parses_speaker_id_age_pairs():
+def test_parse_spk2age_parses_speaker_id_age_pairs() -> None:
     assert parse_spk2age("0003 6\n0024 25\n") == {"0003": 6, "0024": 25}
 
 
-def test_parse_spk2age_raises_on_malformed_line():
+def test_parse_spk2age_raises_on_malformed_line() -> None:
     with pytest.raises(ValueError, match="Malformed"):
         parse_spk2age("0003\n")
 
@@ -111,13 +115,16 @@ def test_parse_spk2age_raises_on_malformed_line():
         (19, False),
         (43, False),
     ],
+    ids=["youngest-child", "oldest-child", "youngest-adult", "oldest-adult"],
 )
-def test_is_child(age, expected):
+def test_is_child(age: int, expected: bool) -> None:
     assert is_child(age) is expected
 
 
-def test_audio_path_builds_speaker_directory_layout():
-    utt = UtteranceAnnotation(utt_id="0001010011", speaker_id="0001", text="THIS", words=[])
+def test_audio_path_builds_speaker_directory_layout() -> None:
+    utt = UtteranceAnnotation(
+        utt_id="0001010011", speaker_id="0001", text="THIS", words=[]
+    )
     assert audio_path(utt, Path("/data/speechocean762/WAVE")) == Path(
         "/data/speechocean762/WAVE/SPEAKER0001/0001010011.WAV"
     )
@@ -128,16 +135,17 @@ def test_audio_path_builds_speaker_directory_layout():
     [
         (2.0, 0.5, False),
         (0.4, 0.5, True),
-        (0.5, 0.5, False),  # boundary: exactly at threshold counts as pronounced
+        (0.5, 0.5, False),
         (0.0, 0.5, True),
     ],
+    ids=["above", "below", "at-threshold", "zero"],
 )
-def test_is_mispronounced(accuracy, threshold, expected):
+def test_is_mispronounced(accuracy: float, threshold: float, expected: bool) -> None:
     assert is_mispronounced(accuracy, threshold) is expected
 
 
 def _make_utterances(speaker_counts: dict[str, int]) -> list[UtteranceAnnotation]:
-    utterances = []
+    utterances: list[UtteranceAnnotation] = []
     for speaker, count in speaker_counts.items():
         for i in range(count):
             utterances.append(
@@ -148,33 +156,32 @@ def _make_utterances(speaker_counts: dict[str, int]) -> list[UtteranceAnnotation
     return utterances
 
 
-def test_stratified_sample_returns_requested_count():
+def test_stratified_sample_returns_requested_count() -> None:
     utterances = _make_utterances({"0001": 5, "0002": 5, "0003": 5})
     sample = stratified_sample(utterances, n=6, seed=0)
     assert len(sample) == 6
 
 
-def test_stratified_sample_is_deterministic_for_same_seed():
+def test_stratified_sample_is_deterministic_for_same_seed() -> None:
     utterances = _make_utterances({"0001": 5, "0002": 5, "0003": 5})
     first = stratified_sample(utterances, n=6, seed=42)
     second = stratified_sample(utterances, n=6, seed=42)
     assert [u.utt_id for u in first] == [u.utt_id for u in second]
 
 
-def test_stratified_sample_spreads_across_speakers():
-    """A subset smaller than the speaker count should still touch every speaker."""
+def test_stratified_sample_spreads_across_speakers() -> None:
     utterances = _make_utterances({"0001": 10, "0002": 10, "0003": 10})
     sample = stratified_sample(utterances, n=3, seed=0)
     assert {u.speaker_id for u in sample} == {"0001", "0002", "0003"}
 
 
-def test_stratified_sample_raises_when_n_exceeds_pool():
+def test_stratified_sample_raises_when_n_exceeds_pool() -> None:
     utterances = _make_utterances({"0001": 2})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="only 2 available"):
         stratified_sample(utterances, n=3, seed=0)
 
 
-def test_stratified_sample_raises_on_negative_n():
+def test_stratified_sample_raises_on_negative_n() -> None:
     utterances = _make_utterances({"0001": 2})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="non-negative"):
         stratified_sample(utterances, n=-1, seed=0)

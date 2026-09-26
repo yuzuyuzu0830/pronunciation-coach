@@ -1,31 +1,23 @@
-"""Unit tests for scripts/compare_whisper_models.py helpers.
-
-No real Whisper model is loaded
-and format_report so a single bad recording cannot regress into aborting
-the whole multi-model run.
-"""
-
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
-
-from compare_whisper_models import evaluate_case, format_report  # noqa: E402
+from scripts.compare_whisper_models import evaluate_case, format_report
 
 
 class _StubTranscriber:
-    def __init__(self, behavior):
-        self._behavior = behavior
+    def __init__(self, result: str | Exception) -> None:
+        self._result = result
 
-    def transcribe(self, audio_path: Path) -> str:
-        return self._behavior(audio_path)
+    def transcribe(self, _audio_path: Path) -> str:
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
 
 
-def _case(audio_file: str = "audio/x.wav", target: str = "hello world") -> dict:
+def _case(
+    audio_file: str = "audio/x.wav", target: str = "hello world"
+) -> dict[str, object]:
     return {
         "audio_file": audio_file,
         "outcome": "ok",
@@ -33,11 +25,11 @@ def _case(audio_file: str = "audio/x.wav", target: str = "hello world") -> dict:
     }
 
 
-def test_evaluate_case_scores_successful_transcription(tmp_path: Path):
+def test_evaluate_case_scores_successful_transcription(tmp_path: Path) -> None:
     audio = tmp_path / "audio" / "x.wav"
     audio.parent.mkdir()
     audio.write_bytes(b"fake")
-    transcriber = _StubTranscriber(lambda _p: "hello world")
+    transcriber = _StubTranscriber("hello world")
 
     result = evaluate_case(transcriber, _case(), tmp_path)
 
@@ -47,10 +39,8 @@ def test_evaluate_case_scores_successful_transcription(tmp_path: Path):
     assert result["gate_passed"] is True
 
 
-def test_evaluate_case_records_file_not_found_without_raising(tmp_path: Path):
-    transcriber = _StubTranscriber(
-        lambda p: (_ for _ in ()).throw(FileNotFoundError(f"Audio file not found: {p}"))
-    )
+def test_evaluate_case_records_file_not_found_without_raising(tmp_path: Path) -> None:
+    transcriber = _StubTranscriber(FileNotFoundError("Audio file not found"))
 
     result = evaluate_case(transcriber, _case(), tmp_path)
 
@@ -61,12 +51,8 @@ def test_evaluate_case_records_file_not_found_without_raising(tmp_path: Path):
     assert "FileNotFoundError" in result["error"]
 
 
-def test_evaluate_case_records_empty_transcript_without_raising(tmp_path: Path):
-    transcriber = _StubTranscriber(
-        lambda p: (_ for _ in ()).throw(
-            ValueError(f"Whisper produced an empty transcript for {p}.")
-        )
-    )
+def test_evaluate_case_records_empty_transcript_without_raising(tmp_path: Path) -> None:
+    transcriber = _StubTranscriber(ValueError("Whisper produced an empty transcript"))
 
     result = evaluate_case(transcriber, _case(), tmp_path)
 
@@ -74,10 +60,10 @@ def test_evaluate_case_records_empty_transcript_without_raising(tmp_path: Path):
     assert "ValueError" in result["error"]
 
 
-def test_evaluate_case_records_model_runtime_error_without_raising(tmp_path: Path):
-    transcriber = _StubTranscriber(
-        lambda _p: (_ for _ in ()).throw(RuntimeError("inference failed"))
-    )
+def test_evaluate_case_records_model_runtime_error_without_raising(
+    tmp_path: Path,
+) -> None:
+    transcriber = _StubTranscriber(RuntimeError("inference failed"))
 
     result = evaluate_case(transcriber, _case(), tmp_path)
 
@@ -85,7 +71,7 @@ def test_evaluate_case_records_model_runtime_error_without_raising(tmp_path: Pat
     assert result["error"] == "RuntimeError: inference failed"
 
 
-def test_format_report_includes_error_rows_and_skips_them_in_wer():
+def test_format_report_includes_error_rows_and_skips_them_in_wer() -> None:
     ok = {
         "audio_file": "audio/ok.wav",
         "logged_outcome": "ok",

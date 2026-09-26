@@ -1,40 +1,33 @@
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
-
 import pytest
 
 from pronunciation_coach.types import PhonemeError
+from scripts import run_pipeline
 from ui import config
 
-_SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "run_pipeline.py"
-_SPEC = importlib.util.spec_from_file_location("run_pipeline_script", _SCRIPT_PATH)
-if _SPEC is None or _SPEC.loader is None:
-    raise ImportError(f"Cannot load {_SCRIPT_PATH}")
-run_pipeline = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(run_pipeline)
 
-
-def test_build_pipeline_uses_current_system_config(monkeypatch: pytest.MonkeyPatch):
+def test_build_pipeline_uses_current_system_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: dict[str, object] = {}
     transcriber = object()
     recognizer = object()
     explainer = object()
 
-    def make_transcriber(*, model_size: str):
+    def make_transcriber(*, model_size: str) -> object:
         calls["whisper"] = model_size
         return transcriber
 
-    def make_recognizer(*, model_name: str):
+    def make_recognizer(*, model_name: str) -> object:
         calls["wav2vec2"] = model_name
         return recognizer
 
-    def make_explainer(*, model: str, base_url: str, prompt_version: str):
+    def make_explainer(*, model: str, base_url: str, prompt_version: str) -> object:
         calls["ollama"] = (model, base_url, prompt_version)
         return explainer
 
-    def make_pipeline(**kwargs: object):
+    def make_pipeline(**kwargs: object) -> object:
         calls["pipeline"] = kwargs
         return object()
 
@@ -77,11 +70,13 @@ def test_build_pipeline_uses_current_system_config(monkeypatch: pytest.MonkeyPat
         ),
     ],
 )
-def test_format_error_handles_missing_phonemes(error: PhonemeError, expected: str):
+def test_format_error_handles_missing_phonemes(
+    error: PhonemeError, expected: str
+) -> None:
     assert run_pipeline._format_error(error) == expected
 
 
-def test_format_error_marks_possible_misread():
+def test_format_error_marks_possible_misread() -> None:
     error = PhonemeError(
         "substitution", "h", "b", 4, "high", possibly_misread=True, misread_as="buy"
     )

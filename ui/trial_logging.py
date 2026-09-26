@@ -38,12 +38,9 @@ def build_trial_record(
     config: dict | None = None,
     timestamp: datetime | None = None,
 ) -> dict:
-    """Assemble one trial_log.jsonl record.
+    """Assemble one serializable trial record.
 
-    app_session_id identifies the app launch, not the participant or the trial, 
-    records before and after the restart carry different values,
-    so an environment-caused behavior change can be isolated to a specific
-    launch during analysis.
+    ``app_session_id`` identifies the app launch so analysis can separate runs.
     """
     ts = timestamp if timestamp is not None else datetime.now(timezone.utc)
     return {
@@ -66,9 +63,7 @@ def build_trial_record(
 
 
 def append_trial_record(record: dict, jsonl_path: Path) -> None:
-    """Append one record as a JSON line, flushing immediately (mirrors
-    scripts/evaluate_detection.py's run_stage1: a crash loses at most the
-    in-flight record, not prior ones)."""
+    """Append and flush one JSON record so previous trials survive a crash."""
     jsonl_path.parent.mkdir(parents=True, exist_ok=True)
     with jsonl_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -87,9 +82,7 @@ def copy_trial_audio(
     participant_id: str,
     timestamp: datetime | None = None,
 ) -> Path:
-    """Copy the recorded audio into audio_dir before it can be cleaned up,
-    named by UTC timestamp + participant id so
-    files sort chronologically and stay attributable at a glance."""
+    """Copy temporary audio into the trial archive under a traceable filename."""
     ts = timestamp if timestamp is not None else datetime.now(timezone.utc)
     audio_dir.mkdir(parents=True, exist_ok=True)
     suffix = source_path.suffix or ".wav"

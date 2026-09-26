@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +15,7 @@ from ui.trial_logging import (
 FIXED_TS = datetime(2026, 7, 24, 12, 0, 0, tzinfo=timezone.utc)
 
 
-def make_report() -> DiagnosisReport:
+def _make_report() -> DiagnosisReport:
     return DiagnosisReport(
         transcript="this is high",
         target_text="this is high",
@@ -24,7 +26,7 @@ def make_report() -> DiagnosisReport:
     )
 
 
-def make_validation(passed: bool = True) -> ReadingValidation:
+def _make_validation(passed: bool = True) -> ReadingValidation:
     return ReadingValidation(
         target_words=["this", "is", "high"],
         transcript_words=["this", "is", "high"],
@@ -34,10 +36,7 @@ def make_validation(passed: bool = True) -> ReadingValidation:
     )
 
 
-# --- build_trial_record ---
-
-
-def test_build_trial_record_ok_outcome_includes_all_fields():
+def test_build_trial_record_ok_outcome_includes_all_fields() -> None:
     record = build_trial_record(
         app_session_id="session-123",
         participant_id="P01",
@@ -47,10 +46,15 @@ def test_build_trial_record_ok_outcome_includes_all_fields():
         audio_file="audio/20260724T120000Z_P01.wav",
         outcome="ok",
         transcript="this is high",
-        validation=make_validation(),
-        report=make_report(),
+        validation=_make_validation(),
+        report=_make_report(),
         explanation="Great job overall...",
-        timings_sec={"transcribe": 1.2, "recognize": 0.3, "explain": 28.9, "total": 30.4},
+        timings_sec={
+            "transcribe": 1.2,
+            "recognize": 0.3,
+            "explain": 28.9,
+            "total": 30.4,
+        },
         config={"ollama_model": "llama3.1:8b", "prompt_version": "v3"},
         timestamp=FIXED_TS,
     )
@@ -80,7 +84,7 @@ def test_build_trial_record_ok_outcome_includes_all_fields():
     assert record["config"] == {"ollama_model": "llama3.1:8b", "prompt_version": "v3"}
 
 
-def test_build_trial_record_is_json_serializable():
+def test_build_trial_record_is_json_serializable() -> None:
     record = build_trial_record(
         app_session_id="session-123",
         participant_id="P01",
@@ -89,14 +93,14 @@ def test_build_trial_record_is_json_serializable():
         target_source="preset",
         audio_file="audio/x.wav",
         outcome="ok",
-        report=make_report(),
-        validation=make_validation(),
+        report=_make_report(),
+        validation=_make_validation(),
         timestamp=FIXED_TS,
     )
-    json.dumps(record, ensure_ascii=False)  # must not raise
+    json.dumps(record, ensure_ascii=False)
 
 
-def test_build_trial_record_defaults_missing_optional_fields_to_none_or_empty():
+def test_build_trial_record_defaults_missing_optional_fields_to_none_or_empty() -> None:
     record = build_trial_record(
         app_session_id="session-123",
         participant_id="P02",
@@ -117,7 +121,7 @@ def test_build_trial_record_defaults_missing_optional_fields_to_none_or_empty():
     assert record["error_detail"] == "recording too short"
 
 
-def test_build_trial_record_uses_current_time_when_timestamp_omitted():
+def test_build_trial_record_uses_current_time_when_timestamp_omitted() -> None:
     before = datetime.now(timezone.utc)
     record = build_trial_record(
         app_session_id="s",
@@ -133,10 +137,7 @@ def test_build_trial_record_uses_current_time_when_timestamp_omitted():
     assert before <= ts <= after
 
 
-# --- append_trial_record ---
-
-
-def test_append_trial_record_writes_one_json_line_per_call(tmp_path):
+def test_append_trial_record_writes_one_json_line_per_call(tmp_path: Path) -> None:
     path = tmp_path / "trial_log.jsonl"
     record1 = {"outcome": "ok", "participant_id": "P01"}
     record2 = {"outcome": "error", "participant_id": "P02"}
@@ -150,16 +151,13 @@ def test_append_trial_record_writes_one_json_line_per_call(tmp_path):
     assert json.loads(lines[1]) == record2
 
 
-def test_append_trial_record_creates_parent_directory(tmp_path):
+def test_append_trial_record_creates_parent_directory(tmp_path: Path) -> None:
     path = tmp_path / "nested" / "dir" / "trial_log.jsonl"
     append_trial_record({"outcome": "ok"}, path)
     assert path.exists()
 
 
-# --- copy_trial_audio ---
-
-
-def test_copy_trial_audio_copies_content_to_named_destination(tmp_path):
+def test_copy_trial_audio_copies_content_to_named_destination(tmp_path: Path) -> None:
     source = tmp_path / "recording.wav"
     source.write_bytes(b"fake-audio-bytes")
     audio_dir = tmp_path / "audio"
@@ -168,10 +166,10 @@ def test_copy_trial_audio_copies_content_to_named_destination(tmp_path):
 
     assert dest == audio_dir / "20260724T120000Z_P01.wav"
     assert dest.read_bytes() == b"fake-audio-bytes"
-    assert source.exists()  # copy, not move
+    assert source.exists()
 
 
-def test_copy_trial_audio_creates_audio_dir(tmp_path):
+def test_copy_trial_audio_creates_audio_dir(tmp_path: Path) -> None:
     source = tmp_path / "recording.wav"
     source.write_bytes(b"x")
     audio_dir = tmp_path / "nested" / "audio"
@@ -180,35 +178,32 @@ def test_copy_trial_audio_creates_audio_dir(tmp_path):
     assert dest.exists()
 
 
-def test_copy_trial_audio_sanitizes_unsafe_participant_id(tmp_path):
+def test_copy_trial_audio_sanitizes_unsafe_participant_id(tmp_path: Path) -> None:
     source = tmp_path / "recording.wav"
     source.write_bytes(b"x")
     audio_dir = tmp_path / "audio"
 
     dest = copy_trial_audio(source, audio_dir, "P01/../etc", timestamp=FIXED_TS)
     assert dest.name == "20260724T120000Z_P01____etc.wav"
-    assert dest.parent == audio_dir  # never escapes audio_dir
+    assert dest.parent == audio_dir
 
 
-def test_copy_trial_audio_preserves_source_suffix(tmp_path):
+def test_copy_trial_audio_preserves_source_suffix(tmp_path: Path) -> None:
     source = tmp_path / "recording.mp3"
     source.write_bytes(b"x")
     dest = copy_trial_audio(source, tmp_path / "audio", "P01", timestamp=FIXED_TS)
     assert dest.suffix == ".mp3"
 
 
-# --- sanitize_participant_id ---
-
-
-def test_sanitize_participant_id_keeps_alnum_dash_underscore():
+def test_sanitize_participant_id_keeps_alnum_dash_underscore() -> None:
     assert sanitize_participant_id("P01") == "P01"
     assert sanitize_participant_id("P-01_a") == "P-01_a"
 
 
-def test_sanitize_participant_id_replaces_unsafe_characters():
+def test_sanitize_participant_id_replaces_unsafe_characters() -> None:
     assert sanitize_participant_id("P01/../etc") == "P01____etc"
     assert sanitize_participant_id("P01 (retry)") == "P01__retry_"
 
 
-def test_sanitize_participant_id_empty_becomes_unknown():
+def test_sanitize_participant_id_empty_becomes_unknown() -> None:
     assert sanitize_participant_id("") == "unknown"
